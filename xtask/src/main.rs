@@ -41,7 +41,7 @@ fn pascal_case(s: &str) -> String {
 }
 
 fn variant_name(ty: &str) -> String {
-    if is_ident(ty) {
+    let name = if is_ident(ty) {
         pascal_case(ty)
     } else {
         SYMBOL_MAP
@@ -49,7 +49,9 @@ fn variant_name(ty: &str) -> String {
             .find(|(sym, _)| *sym == ty)
             .map(|(_, name)| name.to_string())
             .unwrap_or_else(|| panic!("no SYMBOL_MAP entry for token {ty:?}; add one in xtask"))
-    }
+    };
+    assert!(!name.is_empty(), "empty variant name generated for node type {ty:?}");
+    name
 }
 
 /// Produce the full contents of `src/kind.rs` from a node-types.json string.
@@ -110,10 +112,19 @@ fn kind_rs_path() -> PathBuf {
 }
 
 fn main() {
-    let generated = generate_kind_rs(tree_sitter_m1::NODE_TYPES_JSON);
-    let path = kind_rs_path();
-    std::fs::write(&path, generated).expect("write src/kind.rs");
-    println!("wrote {}", path.display());
+    let arg = std::env::args().nth(1);
+    match arg.as_deref() {
+        None | Some("gen-kinds") => {
+            let generated = generate_kind_rs(tree_sitter_m1::NODE_TYPES_JSON);
+            let path = kind_rs_path();
+            std::fs::write(&path, generated).expect("write src/kind.rs");
+            println!("wrote {}", path.display());
+        }
+        Some(other) => {
+            eprintln!("unknown command {other:?}; usage: cargo run -p xtask -- gen-kinds");
+            std::process::exit(2);
+        }
+    }
 }
 
 #[cfg(test)]
