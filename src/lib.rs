@@ -4,3 +4,7 @@
 //! tree-sitter tree behind m1-core's own [`Node`]/[`Kind`] types, plus a shared
 //! [`Diagnostic`] type and syntax-error reporting. tree-sitter is an
 //! implementation detail and is never exposed to consumers.
+
+mod kind;
+
+pub use kind::Kind;
