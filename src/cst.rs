@@ -151,6 +151,28 @@ impl<'a> Node<'a> {
             .collect()
     }
 
+    /// Lazy iterator over all direct children (named and anonymous).
+    pub fn child_nodes(&self) -> Children<'a> {
+        Children {
+            parent: self.inner,
+            source: self.source,
+            index: 0,
+            count: self.inner.child_count(),
+            named_only: false,
+        }
+    }
+
+    /// Lazy iterator over direct named children only.
+    pub fn named_child_nodes(&self) -> Children<'a> {
+        Children {
+            parent: self.inner,
+            source: self.source,
+            index: 0,
+            count: self.inner.named_child_count(),
+            named_only: true,
+        }
+    }
+
     /// The child filling the given grammar field, if present.
     pub fn child_by_field(&self, field: Field) -> Option<Node<'a>> {
         self.inner
@@ -159,6 +181,39 @@ impl<'a> Node<'a> {
                 inner,
                 source: self.source,
             })
+    }
+}
+
+/// Iterator over a node's direct children, yielded lazily. When `named_only`
+/// is set, only named children are visited. Allocates nothing per element.
+pub struct Children<'a> {
+    parent: tree_sitter::Node<'a>,
+    source: &'a str,
+    index: usize,
+    count: usize,
+    named_only: bool,
+}
+
+impl<'a> Iterator for Children<'a> {
+    type Item = Node<'a>;
+
+    fn next(&mut self) -> Option<Node<'a>> {
+        while self.index < self.count {
+            let i = self.index;
+            self.index += 1;
+            let child = if self.named_only {
+                self.parent.named_child(i)
+            } else {
+                self.parent.child(i)
+            };
+            if let Some(inner) = child {
+                return Some(Node {
+                    inner,
+                    source: self.source,
+                });
+            }
+        }
+        None
     }
 }
 
@@ -240,5 +295,24 @@ mod tests {
         assert!(right.next_sibling().is_none());
         assert_eq!(op.prev_sibling().unwrap().text(), "a");
         assert!(left.prev_sibling().is_none());
+    }
+
+    #[test]
+    fn child_iterators_match_vec_accessors() {
+        let cst = parse("if x { y = 1; }\n");
+        let if_stmt = cst.root().children().into_iter().next().unwrap();
+
+        let iter_all: Vec<_> = if_stmt.child_nodes().map(|n| n.kind()).collect();
+        let vec_all: Vec<_> = if_stmt.children().iter().map(|n| n.kind()).collect();
+        assert_eq!(iter_all, vec_all);
+
+        let iter_named: Vec<_> = if_stmt.named_child_nodes().map(|n| n.kind()).collect();
+        let vec_named: Vec<_> = if_stmt.named_children().iter().map(|n| n.kind()).collect();
+        assert_eq!(iter_named, vec_named);
+
+        // Iterators are non-empty for a node with children and byte-faithful.
+        assert!(iter_all.len() >= iter_named.len());
+        let first = if_stmt.child_nodes().next().unwrap();
+        assert_eq!(first.byte_range(), if_stmt.children()[0].byte_range());
     }
 }
