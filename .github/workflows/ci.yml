@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Checkout tree-sitter-m1
-        run: git clone --depth 1 https://github.com/C-Nucifora/tree-sitter-m1.git ../tree-sitter-m1
+        run: git clone --depth 1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/C-Nucifora/tree-sitter-m1.git ../tree-sitter-m1
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --verbose
@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Checkout tree-sitter-m1
-        run: git clone --depth 1 https://github.com/C-Nucifora/tree-sitter-m1.git ../tree-sitter-m1
+        run: git clone --depth 1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/C-Nucifora/tree-sitter-m1.git ../tree-sitter-m1
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets -- -D warnings
@@ -39,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Checkout tree-sitter-m1
-        run: git clone --depth 1 https://github.com/C-Nucifora/tree-sitter-m1.git ../tree-sitter-m1
+        run: git clone --depth 1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/C-Nucifora/tree-sitter-m1.git ../tree-sitter-m1
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo fmt --all -- --check
 
@@ -49,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Checkout tree-sitter-m1
-        run: git clone --depth 1 https://github.com/C-Nucifora/tree-sitter-m1.git ../tree-sitter-m1
+        run: git clone --depth 1 https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/C-Nucifora/tree-sitter-m1.git ../tree-sitter-m1
       - uses: rustsec/audit-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
