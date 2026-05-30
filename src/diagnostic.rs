@@ -41,6 +41,45 @@ pub struct Diagnostic {
     pub message: String,
 }
 
+impl Diagnostic {
+    /// Build a diagnostic from explicit ranges.
+    pub fn new(
+        severity: Severity,
+        code: Code,
+        range: Range,
+        byte_range: std::ops::Range<usize>,
+        message: impl Into<String>,
+    ) -> Diagnostic {
+        Diagnostic {
+            range,
+            byte_range,
+            severity,
+            code,
+            message: message.into(),
+        }
+    }
+
+    /// Build an [`Severity::Error`] diagnostic.
+    pub fn error(
+        code: Code,
+        range: Range,
+        byte_range: std::ops::Range<usize>,
+        message: impl Into<String>,
+    ) -> Diagnostic {
+        Diagnostic::new(Severity::Error, code, range, byte_range, message)
+    }
+
+    /// Build a [`Severity::Warning`] diagnostic.
+    pub fn warning(
+        code: Code,
+        range: Range,
+        byte_range: std::ops::Range<usize>,
+        message: impl Into<String>,
+    ) -> Diagnostic {
+        Diagnostic::new(Severity::Warning, code, range, byte_range, message)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,5 +98,32 @@ mod tests {
         };
         assert_eq!(d.severity, Severity::Error);
         assert_eq!(d.range.end.column, 3);
+    }
+
+    #[test]
+    fn constructors_match_struct_literal() {
+        let range = Range {
+            start: Position { line: 0, column: 0 },
+            end: Position { line: 0, column: 3 },
+        };
+        let expected = Diagnostic {
+            range,
+            byte_range: 0..3,
+            severity: Severity::Error,
+            code: Code::SyntaxError,
+            message: "boom".to_string(),
+        };
+        assert_eq!(
+            Diagnostic::new(Severity::Error, Code::SyntaxError, range, 0..3, "boom"),
+            expected
+        );
+        assert_eq!(
+            Diagnostic::error(Code::SyntaxError, range, 0..3, "boom"),
+            expected
+        );
+        assert_eq!(
+            Diagnostic::warning(Code::SyntaxError, range, 0..3, "boom").severity,
+            Severity::Warning
+        );
     }
 }
