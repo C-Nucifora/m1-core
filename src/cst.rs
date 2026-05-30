@@ -111,6 +111,22 @@ impl<'a> Node<'a> {
         })
     }
 
+    /// The next sibling in the parent's child list, if any.
+    pub fn next_sibling(&self) -> Option<Node<'a>> {
+        self.inner.next_sibling().map(|inner| Node {
+            inner,
+            source: self.source,
+        })
+    }
+
+    /// The previous sibling in the parent's child list, if any.
+    pub fn prev_sibling(&self) -> Option<Node<'a>> {
+        self.inner.prev_sibling().map(|inner| Node {
+            inner,
+            source: self.source,
+        })
+    }
+
     /// All direct children (named and anonymous).
     pub fn children(&self) -> Vec<Node<'a>> {
         let mut cursor = self.inner.walk();
@@ -204,5 +220,25 @@ mod tests {
 
         // Absent field -> None.
         assert!(stmt.child_by_field(Field::Condition).is_none());
+    }
+
+    #[test]
+    fn sibling_navigation() {
+        let cst = parse("x = a + b;\n");
+        let stmt = cst.root().children().into_iter().next().unwrap();
+        let value = {
+            use crate::Field;
+            stmt.child_by_field(Field::Value).unwrap()
+        };
+        // children of the binary expression: a, +, b
+        let left = value.children().into_iter().next().unwrap();
+        assert_eq!(left.text(), "a");
+        let op = left.next_sibling().unwrap();
+        assert_eq!(op.text(), "+");
+        let right = op.next_sibling().unwrap();
+        assert_eq!(right.text(), "b");
+        assert!(right.next_sibling().is_none());
+        assert_eq!(op.prev_sibling().unwrap().text(), "a");
+        assert!(left.prev_sibling().is_none());
     }
 }
