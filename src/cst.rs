@@ -5,6 +5,7 @@ use crate::diagnostic::{Position, Range};
 use crate::kind::Kind;
 
 /// A parsed M1 source file: the tree-sitter tree plus the owned source text.
+#[derive(Debug)]
 pub struct Cst {
     tree: tree_sitter::Tree,
     source: String,
@@ -48,7 +49,7 @@ impl Cst {
 
 /// A node in the CST, wrapping a `tree_sitter::Node` plus a borrow of the
 /// source so callers can get text and ranges without a separate handle.
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Node<'a> {
     inner: tree_sitter::Node<'a>,
     source: &'a str,
@@ -111,8 +112,9 @@ impl<'a> Node<'a> {
 
     /// All direct children (named and anonymous).
     pub fn children(&self) -> Vec<Node<'a>> {
-        (0..self.inner.child_count())
-            .filter_map(|i| self.inner.child(i))
+        let mut cursor = self.inner.walk();
+        self.inner
+            .children(&mut cursor)
             .map(|inner| Node {
                 inner,
                 source: self.source,
@@ -122,8 +124,9 @@ impl<'a> Node<'a> {
 
     /// Direct named children only (skips punctuation/keywords).
     pub fn named_children(&self) -> Vec<Node<'a>> {
-        (0..self.inner.named_child_count())
-            .filter_map(|i| self.inner.named_child(i))
+        let mut cursor = self.inner.walk();
+        self.inner
+            .named_children(&mut cursor)
             .map(|inner| Node {
                 inner,
                 source: self.source,
