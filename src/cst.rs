@@ -2,6 +2,7 @@
 //! `tree_sitter`; everything outside sees m1-core's own [`Cst`]/[`Node`].
 
 use crate::diagnostic::{Position, Range};
+use crate::field::Field;
 use crate::kind::Kind;
 
 /// A parsed M1 source file: the tree-sitter tree plus the owned source text.
@@ -133,6 +134,16 @@ impl<'a> Node<'a> {
             })
             .collect()
     }
+
+    /// The child filling the given grammar field, if present.
+    pub fn child_by_field(&self, field: Field) -> Option<Node<'a>> {
+        self.inner
+            .child_by_field_name(field.as_str())
+            .map(|inner| Node {
+                inner,
+                source: self.source,
+            })
+    }
 }
 
 #[cfg(test)]
@@ -174,5 +185,24 @@ mod tests {
         assert_eq!(member.kind(), Kind::MemberExpression);
         let obj = member.named_children().into_iter().next().unwrap();
         assert_eq!(obj.text(), "Vund Klee");
+    }
+
+    #[test]
+    fn child_by_field_finds_roles() {
+        use crate::Field;
+        let cst = parse("x = a + b;\n");
+        let stmt = cst.root().children().into_iter().next().unwrap();
+        assert_eq!(stmt.kind(), Kind::AssignmentStatement);
+        let target = stmt.child_by_field(Field::Target).unwrap();
+        assert_eq!(target.text(), "x");
+
+        let value = stmt.child_by_field(Field::Value).unwrap();
+        assert_eq!(value.kind(), Kind::BinaryExpression);
+        assert_eq!(value.child_by_field(Field::Left).unwrap().text(), "a");
+        assert_eq!(value.child_by_field(Field::Operator).unwrap().text(), "+");
+        assert_eq!(value.child_by_field(Field::Right).unwrap().text(), "b");
+
+        // Absent field -> None.
+        assert!(stmt.child_by_field(Field::Condition).is_none());
     }
 }

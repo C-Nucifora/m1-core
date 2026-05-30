@@ -6,10 +6,12 @@
 //! implementation detail and is never exposed to consumers.
 
 mod kind;
+mod field;
 mod diagnostic;
 mod cst;
 mod syntax;
 
 pub use kind::Kind;
+pub use field::Field;
 pub use diagnostic::{Code, Diagnostic, Position, Range, Severity};
 pub use cst::{parse, Cst, Node};
