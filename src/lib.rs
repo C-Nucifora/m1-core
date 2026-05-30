@@ -14,4 +14,4 @@ mod syntax;
 pub use kind::Kind;
 pub use field::Field;
 pub use diagnostic::{Code, Diagnostic, Position, Range, Severity};
-pub use cst::{parse, Children, Cst, Node};
+pub use cst::{parse, Children, Cst, Descendants, Node};

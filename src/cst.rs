@@ -173,6 +173,14 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// Pre-order iterator over this node and all of its descendants.
+    pub fn descendants(&self) -> Descendants<'a> {
+        Descendants {
+            stack: vec![self.inner],
+            source: self.source,
+        }
+    }
+
     /// The child filling the given grammar field, if present.
     pub fn child_by_field(&self, field: Field) -> Option<Node<'a>> {
         self.inner
@@ -214,6 +222,33 @@ impl<'a> Iterator for Children<'a> {
             }
         }
         None
+    }
+}
+
+/// Pre-order iterator over a node and all of its descendants (node first, then
+/// each child's subtree, left to right). Uses a single worklist for the whole
+/// traversal rather than allocating a child vector per node.
+pub struct Descendants<'a> {
+    stack: Vec<tree_sitter::Node<'a>>,
+    source: &'a str,
+}
+
+impl<'a> Iterator for Descendants<'a> {
+    type Item = Node<'a>;
+
+    fn next(&mut self) -> Option<Node<'a>> {
+        let inner = self.stack.pop()?;
+        // Push children in reverse so the leftmost is popped next (pre-order).
+        let count = inner.child_count();
+        for i in (0..count).rev() {
+            if let Some(child) = inner.child(i) {
+                self.stack.push(child);
+            }
+        }
+        Some(Node {
+            inner,
+            source: self.source,
+        })
     }
 }
 
@@ -314,5 +349,27 @@ mod tests {
         assert!(iter_all.len() >= iter_named.len());
         let first = if_stmt.child_nodes().next().unwrap();
         assert_eq!(first.byte_range(), if_stmt.children()[0].byte_range());
+    }
+
+    #[test]
+    fn descendants_preorder_matches_recursive_walk() {
+        let cst = parse("x = a + b;\n");
+        let root = cst.root();
+
+        // Reference: recursive children() walk (node first, then each subtree).
+        fn rec<'a>(n: crate::Node<'a>, out: &mut Vec<(Kind, std::ops::Range<usize>)>) {
+            out.push((n.kind(), n.byte_range()));
+            for c in n.children() {
+                rec(c, out);
+            }
+        }
+        let mut reference = Vec::new();
+        rec(root, &mut reference);
+
+        let via_iter: Vec<_> = root.descendants().map(|n| (n.kind(), n.byte_range())).collect();
+        assert_eq!(via_iter, reference);
+
+        // Root is yielded first.
+        assert_eq!(root.descendants().next().unwrap().kind(), Kind::SourceFile);
     }
 }
