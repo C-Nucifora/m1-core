@@ -6,4 +6,4 @@ publish = false
 
 [dependencies]
 serde_json = "1"
-tree-sitter-m1 = { path = "../../tree-sitter-m1" }
+tree-sitter-m1 = { path = "../vendor/tree-sitter-m1" }

@@ -10,4 +10,4 @@ publish = false
 
 [dependencies]
 tree-sitter = "0.25"
-tree-sitter-m1 = { path = "../tree-sitter-m1" }
+tree-sitter-m1 = { path = "vendor/tree-sitter-m1" }
