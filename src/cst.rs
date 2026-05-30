@@ -32,6 +32,11 @@ impl Cst {
         &self.source
     }
 
+    /// All syntax-error diagnostics (ERROR and MISSING nodes) in this tree.
+    pub fn syntax_diagnostics(&self) -> Vec<crate::diagnostic::Diagnostic> {
+        crate::syntax::collect(self)
+    }
+
     /// The root node (`source_file`).
     pub fn root(&self) -> Node<'_> {
         Node {
