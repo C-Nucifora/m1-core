@@ -8,6 +8,7 @@
 mod kind;
 mod diagnostic;
 mod cst;
+mod syntax;
 
 pub use kind::Kind;
 pub use diagnostic::{Code, Diagnostic, Position, Range, Severity};
