@@ -46,6 +46,36 @@ impl Cst {
             source: &self.source,
         }
     }
+
+    /// The smallest node whose byte span contains `offset` (any node). Offsets
+    /// past end-of-file clamp to the document length; always returns a node.
+    pub fn node_at_offset(&self, offset: usize) -> Node<'_> {
+        let off = offset.min(self.source.len());
+        let inner = self
+            .tree
+            .root_node()
+            .descendant_for_byte_range(off, off)
+            .unwrap_or_else(|| self.tree.root_node());
+        Node {
+            inner,
+            source: &self.source,
+        }
+    }
+
+    /// The smallest *named* node whose byte span contains `offset`. Offsets past
+    /// end-of-file clamp; always returns a node.
+    pub fn named_node_at_offset(&self, offset: usize) -> Node<'_> {
+        let off = offset.min(self.source.len());
+        let inner = self
+            .tree
+            .root_node()
+            .named_descendant_for_byte_range(off, off)
+            .unwrap_or_else(|| self.tree.root_node());
+        Node {
+            inner,
+            source: &self.source,
+        }
+    }
 }
 
 /// A node in the CST, wrapping a `tree_sitter::Node` plus a borrow of the
@@ -371,5 +401,25 @@ mod tests {
 
         // Root is yielded first.
         assert_eq!(root.descendants().next().unwrap().kind(), Kind::SourceFile);
+    }
+
+    #[test]
+    fn node_at_offset_finds_token() {
+        let src = "Ratio = 2;\n";
+        let cst = parse(src);
+        // Offset 2 is inside "Ratio".
+        let n = cst.node_at_offset(2);
+        assert_eq!(n.kind(), Kind::Identifier);
+        assert_eq!(n.text(), "Ratio");
+
+        // Named lookup at the "2" literal.
+        let two_at = src.find('2').unwrap();
+        let named = cst.named_node_at_offset(two_at);
+        assert_eq!(named.kind(), Kind::Number);
+        assert_eq!(named.text(), "2");
+
+        // Past EOF clamps and never panics; returns some node.
+        let past = cst.node_at_offset(src.len() + 100);
+        let _ = past.kind();
     }
 }
