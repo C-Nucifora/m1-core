@@ -9,8 +9,6 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
-  CARGO_HOME: /home/runner/.cargo
-  CARGO_INCREMENTAL: 0
 
 jobs:
   test:
@@ -18,10 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: C-Nucifora/tree-sitter-m1
-          path: ../tree-sitter-m1
+      - name: Checkout tree-sitter-m1
+        run: git clone --depth 1 https://github.com/C-Nucifora/tree-sitter-m1.git ../tree-sitter-m1
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --verbose
@@ -31,10 +27,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: C-Nucifora/tree-sitter-m1
-          path: ../tree-sitter-m1
+      - name: Checkout tree-sitter-m1
+        run: git clone --depth 1 https://github.com/C-Nucifora/tree-sitter-m1.git ../tree-sitter-m1
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --all-targets -- -D warnings
@@ -44,10 +38,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: C-Nucifora/tree-sitter-m1
-          path: ../tree-sitter-m1
+      - name: Checkout tree-sitter-m1
+        run: git clone --depth 1 https://github.com/C-Nucifora/tree-sitter-m1.git ../tree-sitter-m1
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo fmt --all -- --check
 
@@ -56,10 +48,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
-        with:
-          repository: C-Nucifora/tree-sitter-m1
-          path: ../tree-sitter-m1
+      - name: Checkout tree-sitter-m1
+        run: git clone --depth 1 https://github.com/C-Nucifora/tree-sitter-m1.git ../tree-sitter-m1
       - uses: rustsec/audit-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
