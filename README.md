@@ -5,6 +5,34 @@ and (later) a `.m1prj`/`.m1cfg` symbol model. Downstream tools (`m1-fmt`,
 `m1-lint`, `m1-typecheck`, `m1-lsp`) depend on this crate and never import
 tree-sitter directly.
 
+## Workspace layout
+
+The M1 toolchain lives in **six separate repositories** coupled through Cargo
+**path** dependencies. They are not published to crates.io, so this crate does
+**not** build from a standalone clone — check out the whole set as siblings under
+one parent directory:
+
+```
+<parent>/
+├── tree-sitter-m1/   # grammar (root)
+├── m1-core/          # this crate
+├── m1-lint/          # depends on ../m1-core
+├── m1-fmt/           # depends on ../m1-core
+├── m1-typecheck/     # depends on ../m1-core
+└── m1-lsp/           # depends on the four above
+```
+
+**`m1-core` depends on `../tree-sitter-m1`** (`tree-sitter-m1 = { path =
+"../tree-sitter-m1" }`) and generates `src/kind.rs` / `src/field.rs` from that
+crate's `node-types.json` — so a clean build, and the `kind_rs_is_fresh` /
+`field_rs_is_fresh` tests, require the matching `tree-sitter-m1` checked out
+alongside it. It is in turn depended on by `m1-lint`, `m1-fmt`, `m1-typecheck`,
+and `m1-lsp`.
+
+Because the repos are independent on GitHub, this coupling is **not visible
+there**: each repo's CI and PRs see only itself. Build/merge ordering across the
+stack is a manual, local-workspace concern.
+
 ## v1 surface
 
 ```rust
