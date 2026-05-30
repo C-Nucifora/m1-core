@@ -167,6 +167,7 @@ mod tests {
     #[test]
     fn multi_word_identifier_is_one_node() {
         // Exercises the external scanner through the m1-core boundary.
+        // (Identifiers here are synthetic placeholders, not from any real project.)
         let cst = parse("Vund Klee.Trilby Glonk = 1;\n");
         let assign = cst.root().children().into_iter().next().unwrap();
         let member = assign.named_children().into_iter().next().unwrap();
