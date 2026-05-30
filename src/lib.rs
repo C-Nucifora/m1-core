@@ -7,6 +7,8 @@
 
 mod kind;
 mod diagnostic;
+mod cst;
 
 pub use kind::Kind;
 pub use diagnostic::{Code, Diagnostic, Position, Range, Severity};
+pub use cst::{parse, Cst, Node};
