@@ -11,21 +11,13 @@ pub(crate) fn collect(cst: &Cst) -> Vec<Diagnostic> {
 
 fn walk(node: Node, out: &mut Vec<Diagnostic>) {
     if node.is_missing() {
-        out.push(Diagnostic {
-            range: node.range(),
-            byte_range: node.byte_range(),
-            severity: Severity::Error,
-            code: Code::MissingToken,
-            message: format!("missing {}", node.kind_str()),
-        });
+        out.push(node.diagnostic(
+            Severity::Error,
+            Code::MissingToken,
+            format!("missing {}", node.kind_str()),
+        ));
     } else if node.is_error() {
-        out.push(Diagnostic {
-            range: node.range(),
-            byte_range: node.byte_range(),
-            severity: Severity::Error,
-            code: Code::SyntaxError,
-            message: "syntax error".to_string(),
-        });
+        out.push(node.diagnostic(Severity::Error, Code::SyntaxError, "syntax error"));
     }
     for child in node.children() {
         walk(child, out);
