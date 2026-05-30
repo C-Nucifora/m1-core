@@ -1,7 +1,7 @@
 //! The wrapped concrete syntax tree. The only module that depends on
 //! `tree_sitter`; everything outside sees m1-core's own [`Cst`]/[`Node`].
 
-use crate::diagnostic::{Position, Range};
+use crate::diagnostic::{Code, Diagnostic, Position, Range, Severity};
 use crate::field::Field;
 use crate::kind::Kind;
 
@@ -121,6 +121,16 @@ impl<'a> Node<'a> {
                 column: e.column as u32,
             },
         }
+    }
+
+    /// Build a diagnostic spanning exactly this node.
+    pub fn diagnostic(
+        &self,
+        severity: Severity,
+        code: Code,
+        message: impl Into<String>,
+    ) -> Diagnostic {
+        Diagnostic::new(severity, code, self.range(), self.byte_range(), message)
     }
 
     /// True if this is an ERROR node.
@@ -421,5 +431,28 @@ mod tests {
         // Past EOF clamps and never panics; returns some node.
         let past = cst.node_at_offset(src.len() + 100);
         let _ = past.kind();
+    }
+
+    #[test]
+    fn node_diagnostic_spans_node() {
+        use crate::{Code, Severity};
+        let src = "Ratio = 2;\n";
+        let cst = parse(src);
+        let target = cst
+            .root()
+            .children()
+            .into_iter()
+            .next()
+            .unwrap()
+            .named_children()
+            .into_iter()
+            .next()
+            .unwrap();
+        let d = target.diagnostic(Severity::Warning, Code::SyntaxError, "hi");
+        assert_eq!(d.severity, Severity::Warning);
+        assert_eq!(d.code, Code::SyntaxError);
+        assert_eq!(d.message, "hi");
+        assert_eq!(d.byte_range, target.byte_range());
+        assert_eq!(d.range, target.range());
     }
 }
