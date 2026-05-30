@@ -6,5 +6,7 @@
 //! implementation detail and is never exposed to consumers.
 
 mod kind;
+mod diagnostic;
 
 pub use kind::Kind;
+pub use diagnostic::{Code, Diagnostic, Position, Range, Severity};
