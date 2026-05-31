@@ -26,7 +26,7 @@ fn walk(node: Node, out: &mut Vec<Diagnostic>) {
 
 #[cfg(test)]
 mod tests {
-    use crate::{parse, Severity};
+    use crate::{Severity, parse};
 
     #[test]
     fn clean_source_has_no_diagnostics() {

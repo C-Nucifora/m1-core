@@ -294,7 +294,7 @@ impl<'a> Iterator for Descendants<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{parse, Kind};
+    use crate::{Kind, parse};
 
     #[test]
     fn parses_and_walks() {
