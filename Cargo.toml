@@ -5,6 +5,7 @@ members = ["xtask"]
 name = "m1-core"
 version = "0.2.0"
 edition = "2024"
+license = "GPL-3.0-or-later"
 description = "Shared CST helpers, symbol model, and diagnostics for the MoTeC M1 script language"
 publish = false
 
