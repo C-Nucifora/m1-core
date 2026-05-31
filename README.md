@@ -75,3 +75,9 @@ These are deliberate v1 scoping/behavior choices, tracked for later increments:
   malformed input could overflow the stack. Not a concern for real M1 scripts.
 - **Byte-column positions.** `Position::column` is a byte offset; UTF-16/LSP
   position conversion is the responsibility of `m1-lsp`.
+
+## License
+
+Licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later) — see [LICENSE](LICENSE).
+
+Copyright (C) 2026 The M1 Tools authors.
