@@ -250,9 +250,9 @@ impl<'a> Iterator for Children<'a> {
             let i = self.index;
             self.index += 1;
             let child = if self.named_only {
-                self.parent.named_child(i)
+                self.parent.named_child(i as u32)
             } else {
-                self.parent.child(i)
+                self.parent.child(i as u32)
             };
             if let Some(inner) = child {
                 return Some(Node {
@@ -281,7 +281,7 @@ impl<'a> Iterator for Descendants<'a> {
         // Push children in reverse so the leftmost is popped next (pre-order).
         let count = inner.child_count();
         for i in (0..count).rev() {
-            if let Some(child) = inner.child(i) {
+            if let Some(child) = inner.child(i as u32) {
                 self.stack.push(child);
             }
         }
