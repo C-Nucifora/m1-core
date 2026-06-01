@@ -12,14 +12,36 @@ pub struct Cst {
     source: String,
 }
 
-/// Parse M1 source into a [`Cst`]. Infallible: grammar load is a build
-/// invariant and tree-sitter always returns a tree.
-pub fn parse(src: &str) -> Cst {
+/// A single contiguous text edit, for incremental reparsing. Byte range
+/// `start_byte..old_end_byte` of the previous source was replaced by content
+/// ending at `new_end_byte` in the new source. (Byte offsets, not char.)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Edit {
+    pub start_byte: usize,
+    pub old_end_byte: usize,
+    pub new_end_byte: usize,
+}
+
+fn make_parser() -> tree_sitter::Parser {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_m1::LANGUAGE.into())
         .expect("load M1 grammar");
-    let tree = parser
+    parser
+}
+
+/// tree-sitter `Point` (row + byte-column) of `byte` within `src`.
+fn point_at(src: &str, byte: usize) -> tree_sitter::Point {
+    let b = byte.min(src.len());
+    let row = src.as_bytes()[..b].iter().filter(|&&c| c == b'\n').count();
+    let column = b - src[..b].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    tree_sitter::Point { row, column }
+}
+
+/// Parse M1 source into a [`Cst`]. Infallible: grammar load is a build
+/// invariant and tree-sitter always returns a tree.
+pub fn parse(src: &str) -> Cst {
+    let tree = make_parser()
         .parse(src, None)
         .expect("tree-sitter always returns a tree");
     Cst {
@@ -32,6 +54,30 @@ impl Cst {
     /// The original source text.
     pub fn source(&self) -> &str {
         &self.source
+    }
+
+    /// Incrementally reparse after `edit`, reusing the previous tree for the
+    /// unaffected subtrees (#9). `new_src` is the full updated source. The
+    /// result is identical to `parse(new_src)` but only the nodes touched by the
+    /// edit are rebuilt — the fast path for editor keystrokes.
+    pub fn reparse(&self, edit: &Edit, new_src: &str) -> Cst {
+        let input_edit = tree_sitter::InputEdit {
+            start_byte: edit.start_byte,
+            old_end_byte: edit.old_end_byte,
+            new_end_byte: edit.new_end_byte,
+            start_position: point_at(&self.source, edit.start_byte),
+            old_end_position: point_at(&self.source, edit.old_end_byte),
+            new_end_position: point_at(new_src, edit.new_end_byte),
+        };
+        let mut old_tree = self.tree.clone();
+        old_tree.edit(&input_edit);
+        let tree = make_parser()
+            .parse(new_src, Some(&old_tree))
+            .expect("tree-sitter always returns a tree");
+        Cst {
+            tree,
+            source: new_src.to_string(),
+        }
     }
 
     /// All syntax-error diagnostics (ERROR and MISSING nodes) in this tree.
@@ -316,7 +362,58 @@ impl<'a> Iterator for Descendants<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::{Edit, Node};
     use crate::{Kind, parse};
+
+    /// Flatten a tree to `(kind, start, end)` for every node, depth-first.
+    fn shape(root: Node) -> Vec<(Kind, usize, usize)> {
+        fn walk(n: Node, out: &mut Vec<(Kind, usize, usize)>) {
+            let r = n.byte_range();
+            out.push((n.kind(), r.start, r.end));
+            for c in n.children() {
+                walk(c, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(root, &mut out);
+        out
+    }
+
+    /// Incremental reparse must yield the identical tree a full parse would.
+    #[test]
+    fn reparse_matches_full_parse_on_insert() {
+        let old = "local x = 1 + 2;\nRatio = x;\n";
+        // Insert " * 3" after "2": bytes [14..14) -> "... 2 * 3;".
+        let new = "local x = 1 + 2 * 3;\nRatio = x;\n";
+        let at = old.find("2;").unwrap() + 1; // byte right after the `2`
+        let cst = parse(old);
+        let edit = Edit {
+            start_byte: at,
+            old_end_byte: at,
+            new_end_byte: at + " * 3".len(),
+        };
+        let inc = cst.reparse(&edit, new);
+        assert_eq!(inc.source(), new);
+        assert_eq!(shape(inc.root()), shape(parse(new).root()));
+    }
+
+    #[test]
+    fn reparse_matches_full_parse_on_multiline_delete() {
+        let old = "local a = 1;\nlocal b = 2;\nlocal c = 3;\n";
+        // Delete the middle line entirely.
+        let start = old.find("local b").unwrap();
+        let end = old.find("local c").unwrap();
+        let new = format!("{}{}", &old[..start], &old[end..]);
+        let cst = parse(old);
+        let edit = Edit {
+            start_byte: start,
+            old_end_byte: end,
+            new_end_byte: start, // deletion: nothing inserted
+        };
+        let inc = cst.reparse(&edit, &new);
+        assert_eq!(inc.source(), new);
+        assert_eq!(shape(inc.root()), shape(parse(&new).root()));
+    }
 
     #[test]
     fn parses_and_walks() {
