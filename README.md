@@ -5,6 +5,17 @@ and (later) a `.m1prj`/`.m1cfg` symbol model. Downstream tools (`m1-fmt`,
 `m1-lint`, `m1-typecheck`, `m1-lsp`) depend on this crate and never import
 tree-sitter directly.
 
+## Layering: type inference lives in `m1-typecheck` (#8)
+
+`m1-core` deliberately exposes only *structural* CST access — `kind`, `children`,
+`field`, `byte_range`, and friends — and **no type-query API on `Node`**. Asking
+"what type does this expression resolve to?" requires the project symbol model
+(`.m1prj`/`.m1cfg`), which lives in the layer **above** this crate, in
+`m1-typecheck`. Putting an `infer_type(node, …)` here would invert that
+dependency. So type information has a single canonical home: downstream tools get
+it from `m1-typecheck` — `resolve(path, scope)` and `typer::type_of(node, scope)`
+— rather than from `m1-core`. (Resolution of #8, option (a).)
+
 ## Workspace layout
 
 The M1 toolchain lives in **six separate repositories** coupled through Cargo
