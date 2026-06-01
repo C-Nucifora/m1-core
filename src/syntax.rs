@@ -16,8 +16,16 @@ fn walk(node: Node, out: &mut Vec<Diagnostic>) {
             Code::MissingToken,
             format!("missing {}", node.kind_str()),
         ));
-    } else if node.is_error() {
+        // A MISSING node is a zero-width leaf; nothing useful lies beneath it.
+        return;
+    }
+    if node.is_error() {
         out.push(node.diagnostic(Severity::Error, Code::SyntaxError, "syntax error"));
+        // Don't recurse into an ERROR node: its children are MISSING/ERROR
+        // fragments of the same parse failure and would emit duplicate,
+        // redundant diagnostics for one error region (#10). Sibling errors
+        // elsewhere are still reported — only this node's subtree is skipped.
+        return;
     }
     for child in node.children() {
         walk(child, out);
@@ -46,5 +54,19 @@ mod tests {
         );
         // Range is within the source and non-degenerate at the source level.
         assert!(diags.iter().all(|d| d.byte_range.start <= d.byte_range.end));
+    }
+
+    #[test]
+    fn error_node_emits_single_diagnostic_not_duplicates() {
+        // `local <Integer> = 1;` parses to an ERROR node wrapping a MISSING
+        // name. Before #10, walk() emitted both a SyntaxError (the ERROR) and a
+        // MissingToken (its child) for the same failure. Now the ERROR subtree
+        // is not recursed, so exactly one diagnostic is produced.
+        let diags = crate::parse("local <Integer> = 1;\n").syntax_diagnostics();
+        assert_eq!(
+            diags.len(),
+            1,
+            "one error region should yield one diagnostic, got {diags:?}"
+        );
     }
 }
