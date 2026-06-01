@@ -99,7 +99,10 @@ impl<'a> Node<'a> {
 
     /// The source text this node spans.
     pub fn text(&self) -> &'a str {
-        &self.source[self.inner.byte_range()]
+        // Defensive: a node's byte range is normally within source, but guard
+        // against an out-of-range range (e.g. an incremental-reparse edge) by
+        // returning "" rather than panicking on a bad slice.
+        self.source.get(self.inner.byte_range()).unwrap_or("")
     }
 
     /// Byte offsets of this node within the source.
