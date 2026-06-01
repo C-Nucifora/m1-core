@@ -29,6 +29,12 @@ pub enum Severity {
 pub enum Code {
     SyntaxError,
     MissingToken,
+    /// Type-checker findings (m1-typecheck).
+    TypeError,
+    /// Lint-rule findings (m1-lint).
+    LintError,
+    /// Semantic findings that aren't strictly type errors (resolution, flow).
+    SemanticError,
 }
 
 /// A single diagnostic with both line/column and byte ranges.
@@ -78,11 +84,34 @@ impl Diagnostic {
     ) -> Diagnostic {
         Diagnostic::new(Severity::Warning, code, range, byte_range, message)
     }
+
+    /// Build a diagnostic spanning a CST node, deriving both the line/column
+    /// `range` and the `byte_range` from the node — so consumers don't repeat
+    /// that extraction at every call site.
+    pub fn at_node(
+        node: crate::Node<'_>,
+        severity: Severity,
+        code: Code,
+        message: impl Into<String>,
+    ) -> Diagnostic {
+        Diagnostic::new(severity, code, node.range(), node.byte_range(), message)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn at_node_derives_ranges_from_node() {
+        let cst = crate::parse("local x = 1;\n");
+        let root = cst.root();
+        let d = Diagnostic::at_node(root, Severity::Warning, Code::TypeError, "hi");
+        assert_eq!(d.code, Code::TypeError);
+        assert_eq!(d.severity, Severity::Warning);
+        assert_eq!(d.byte_range, root.byte_range());
+        assert_eq!(d.range, root.range());
+    }
 
     #[test]
     fn diagnostic_is_constructible() {
