@@ -47,10 +47,29 @@ impl Cst {
         }
     }
 
+    /// Clamp a query offset for `*_node_at_offset`. Interior offsets are left
+    /// untouched. An offset at or past end-of-file is pulled back to the last
+    /// non-whitespace byte, so an EOF cursor (typically sitting just after a
+    /// trailing newline) resolves to the last real token rather than the root
+    /// `source_file` node (see #12).
+    fn clamp_query_offset(&self, offset: usize) -> usize {
+        let len = self.source.len();
+        if offset < len {
+            return offset;
+        }
+        let bytes = self.source.as_bytes();
+        let mut off = len.saturating_sub(1);
+        while off > 0 && bytes[off].is_ascii_whitespace() {
+            off -= 1;
+        }
+        off
+    }
+
     /// The smallest node whose byte span contains `offset` (any node). Offsets
-    /// past end-of-file clamp to the document length; always returns a node.
+    /// at or past end-of-file resolve to the last token rather than the root
+    /// node; always returns a node.
     pub fn node_at_offset(&self, offset: usize) -> Node<'_> {
-        let off = offset.min(self.source.len());
+        let off = self.clamp_query_offset(offset);
         let inner = self
             .tree
             .root_node()
@@ -62,10 +81,10 @@ impl Cst {
         }
     }
 
-    /// The smallest *named* node whose byte span contains `offset`. Offsets past
-    /// end-of-file clamp; always returns a node.
+    /// The smallest *named* node whose byte span contains `offset`. Offsets at
+    /// or past end-of-file resolve to the last token; always returns a node.
     pub fn named_node_at_offset(&self, offset: usize) -> Node<'_> {
-        let off = offset.min(self.source.len());
+        let off = self.clamp_query_offset(offset);
         let inner = self
             .tree
             .root_node()
@@ -437,6 +456,27 @@ mod tests {
         // Past EOF clamps and never panics; returns some node.
         let past = cst.node_at_offset(src.len() + 100);
         let _ = past.kind();
+    }
+
+    #[test]
+    fn node_at_eof_returns_last_token_not_root() {
+        // Cursor exactly at source.len() must resolve to the last token, not
+        // the root SourceFile (regression for #12).
+        let src = "Ratio = 2;\n";
+        let cst = parse(src);
+        let at_eof = cst.node_at_offset(src.len());
+        assert_ne!(at_eof.kind(), Kind::SourceFile);
+        let named_eof = cst.named_node_at_offset(src.len());
+        assert_ne!(named_eof.kind(), Kind::SourceFile);
+
+        // No trailing newline: EOF sits right after ';'.
+        let src2 = "Ratio = 2;";
+        let cst2 = parse(src2);
+        assert_ne!(cst2.node_at_offset(src2.len()).kind(), Kind::SourceFile);
+
+        // Empty source must still not panic and returns a node.
+        let empty = parse("");
+        let _ = empty.node_at_offset(0).kind();
     }
 
     #[test]
