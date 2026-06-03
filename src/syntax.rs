@@ -9,26 +9,32 @@ pub(crate) fn collect(cst: &Cst) -> Vec<Diagnostic> {
     out
 }
 
-fn walk(node: Node, out: &mut Vec<Diagnostic>) {
-    if node.is_missing() {
-        out.push(node.diagnostic(
-            Severity::Error,
-            Code::MissingToken,
-            format!("missing {}", node.kind_str()),
-        ));
-        // A MISSING node is a zero-width leaf; nothing useful lies beneath it.
-        return;
-    }
-    if node.is_error() {
-        out.push(node.diagnostic(Severity::Error, Code::SyntaxError, "syntax error"));
-        // Don't recurse into an ERROR node: its children are MISSING/ERROR
-        // fragments of the same parse failure and would emit duplicate,
-        // redundant diagnostics for one error region (#10). Sibling errors
-        // elsewhere are still reported — only this node's subtree is skipped.
-        return;
-    }
-    for child in node.children() {
-        walk(child, out);
+/// Pre-order traversal with an explicit work-stack (not recursion), so a
+/// pathologically deep tree can't overflow the call stack (#28). Pre-order,
+/// left-to-right diagnostic order is preserved by pushing children in reverse.
+fn walk(root: Node, out: &mut Vec<Diagnostic>) {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.is_missing() {
+            out.push(node.diagnostic(
+                Severity::Error,
+                Code::MissingToken,
+                format!("missing {}", node.kind_str()),
+            ));
+            // A MISSING node is a zero-width leaf; nothing useful lies beneath it.
+            continue;
+        }
+        if node.is_error() {
+            out.push(node.diagnostic(Severity::Error, Code::SyntaxError, "syntax error"));
+            // Don't descend into an ERROR node: its children are MISSING/ERROR
+            // fragments of the same parse failure and would emit duplicate,
+            // redundant diagnostics for one error region (#10). Sibling errors
+            // elsewhere are still reported — only this node's subtree is skipped.
+            continue;
+        }
+        for child in node.children().into_iter().rev() {
+            stack.push(child);
+        }
     }
 }
 
@@ -68,5 +74,16 @@ mod tests {
             1,
             "one error region should yield one diagnostic, got {diags:?}"
         );
+    }
+
+    #[test]
+    fn deeply_nested_input_does_not_overflow_the_stack() {
+        // ~60k nested parens. A recursive walk overflows the (smaller, 2 MiB)
+        // test-thread stack here; the iterative walk must just return.
+        let depth = 60_000;
+        let src = format!("x = {}1{};\n", "(".repeat(depth), ")".repeat(depth));
+        let cst = parse(&src);
+        // Must complete without aborting on a stack overflow.
+        let _ = cst.syntax_diagnostics();
     }
 }

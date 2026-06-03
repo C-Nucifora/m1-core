@@ -82,8 +82,8 @@ These are deliberate v1 scoping/behavior choices, tracked for later increments:
   for v1; revisit before wiring diagnostics into `m1-lsp`.
 - **Generic ERROR message.** ERROR nodes report `"syntax error"` without the
   offending token text.
-- **Recursive tree walk.** `syntax_diagnostics()` recurses; pathologically deep
-  malformed input could overflow the stack. Not a concern for real M1 scripts.
+- **Iterative tree walk.** `syntax_diagnostics()` traverses with an explicit
+  work-stack, so even pathologically deep input cannot overflow the call stack (#28).
 - **Byte-column positions.** `Position::column` is a byte offset; UTF-16/LSP
   position conversion is the responsibility of `m1-lsp`.
 
