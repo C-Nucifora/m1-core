@@ -21,6 +21,7 @@ pub enum Field {
     Subject,
     Target,
     Type,
+    TypeAnnotation,
     Value,
     Variable,
 }
@@ -47,6 +48,7 @@ impl Field {
             Field::Subject => "subject",
             Field::Target => "target",
             Field::Type => "type",
+            Field::TypeAnnotation => "type_annotation",
             Field::Value => "value",
             Field::Variable => "variable",
         }
