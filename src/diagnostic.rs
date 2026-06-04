@@ -35,6 +35,8 @@ pub enum Code {
     LintError,
     /// Semantic findings that aren't strictly type errors (resolution, flow).
     SemanticError,
+    /// `@m1:` annotation findings (m1-core): unknown kind, malformed args.
+    Annotation,
 }
 
 /// A single diagnostic with both line/column and byte ranges.
