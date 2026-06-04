@@ -5,12 +5,14 @@
 //! [`Diagnostic`] type and syntax-error reporting. tree-sitter is an
 //! implementation detail and is never exposed to consumers.
 
+mod annotation;
 mod cst;
 mod diagnostic;
 mod field;
 mod kind;
 mod syntax;
 
+pub use annotation::{Annotation, AnnotationArg, Annotations, Registry, annotations};
 pub use cst::{Children, Cst, Descendants, Node, parse};
 pub use diagnostic::{Code, Diagnostic, Position, Range, Severity};
 pub use field::Field;

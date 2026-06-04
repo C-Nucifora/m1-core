@@ -57,6 +57,28 @@ for node in cst.root().children() {
 let diagnostics = cst.syntax_diagnostics(); // Vec<m1_core::Diagnostic>
 ```
 
+## Annotations (`// @m1:<kind>(args)`)
+
+Comment-embedded attributes — the M1 analogue of Rust attributes / `// eslint-disable` —
+parsed once here and consumed by every downstream tool. They ride inside ordinary
+`//` (and `/* */`) comments, so they are valid M1 and need no grammar change.
+
+```rust
+// // @m1:allow(L010, T030)   ← suppress L010/T030 on the following statement
+// Front Torque = 1; // @m1:safety-critical   ← trailing form attaches to this statement
+let reg = m1_core::Registry::seed();           // or build your own with only the kinds you consume
+let anns = m1_core::annotations(&cst, &reg);
+for a in anns.all() { /* a.kind, a.args, a.target_byte_range */ }
+let warnings = anns.diagnostics();             // unknown-kind warnings (Code::Annotation)
+let suppressed = anns.is_allowed("L010", byte_offset); // honour @allow when filtering diagnostics
+```
+
+An annotation attaches to a **construct**: a comment trailing a statement on the
+same line attaches to that statement; otherwise it is *leading* and attaches to
+the next statement (so annotations stack on consecutive lines above their target).
+A tool registers the kinds it owns; m1-core emits a `Severity::Warning`
+(`Code::Annotation`) for any `@m1:` kind not in the registry — an unknown attribute.
+
 ## Codegen
 
 `src/kind.rs` is generated from `tree-sitter-m1`'s `node-types.json`. After a
