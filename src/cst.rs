@@ -5,6 +5,19 @@ use crate::diagnostic::{Code, Diagnostic, Position, Range, Severity};
 use crate::field::Field;
 use crate::kind::Kind;
 
+/// A conservative nesting-depth bound for consumers that recurse over the tree.
+///
+/// tree-sitter builds an unbounded-depth tree from deeply nested input, so the
+/// natural `for c in node.children() { recurse(c) }` pattern can stack-overflow
+/// (an *uncatchable* abort, fatal to the long-lived LSP) on adversarial source.
+/// Real M1 code nests only a handful of levels — the reference corpus tops out
+/// at 6 — so a tree deeper than this is adversarial. Consumers that must recurse
+/// (type inference, pretty-printing) should compare [`Node::max_depth`] against
+/// this once and bail with a single diagnostic instead of recursing. The value
+/// is far above any real input yet far below the observed ~24k-frame crash
+/// threshold, and safe even on the LSP's smaller worker-thread stacks (#35).
+pub const MAX_RECURSION_DEPTH: usize = 1024;
+
 /// A parsed M1 source file: the tree-sitter tree plus the owned source text.
 #[derive(Debug)]
 pub struct Cst {
@@ -32,7 +45,15 @@ fn make_parser() -> tree_sitter::Parser {
 
 /// tree-sitter `Point` (row + byte-column) of `byte` within `src`.
 fn point_at(src: &str, byte: usize) -> tree_sitter::Point {
-    let b = byte.min(src.len());
+    let mut b = byte.min(src.len());
+    // Round down to a UTF-8 char boundary: an `Edit` byte offset that lands
+    // inside a multibyte character would otherwise panic the `src[..b]` slice
+    // below ("byte index N is not a char boundary"). A column off by a couple of
+    // bytes within one codepoint is harmless; a panic in the reparse path is not
+    // (it would crash the LSP once incremental reparse is wired up) (#36).
+    while b > 0 && !src.is_char_boundary(b) {
+        b -= 1;
+    }
     let row = src.as_bytes()[..b].iter().filter(|&&c| c == b'\n').count();
     let column = b - src[..b].rfind('\n').map(|i| i + 1).unwrap_or(0);
     tree_sitter::Point { row, column }
@@ -282,11 +303,43 @@ impl<'a> Node<'a> {
     }
 
     /// Pre-order iterator over this node and all of its descendants.
+    ///
+    /// This is the recursion-safe way to visit every node in a subtree: it uses
+    /// a single heap work-list, so it does not stack-overflow on a
+    /// pathologically deep tree the way a naive recursive `children()` walk
+    /// would. Prefer it over hand-rolled recursion wherever a traversal only
+    /// needs to see each node.
     pub fn descendants(&self) -> Descendants<'a> {
         Descendants {
             stack: vec![self.inner],
             source: self.source,
         }
+    }
+
+    /// The maximum nesting depth of the subtree rooted at this node, counting
+    /// this node as depth 1.
+    ///
+    /// Computed iteratively (an explicit heap work-stack, never recursion), so
+    /// it is safe to call on an arbitrarily deep tree. A consumer that *must*
+    /// recurse over expression nesting can call this once on the root and bail
+    /// with an "input too deeply nested" diagnostic when it exceeds
+    /// [`MAX_RECURSION_DEPTH`], turning an uncatchable stack-overflow abort on
+    /// adversarial input into a clean diagnostic (#35).
+    pub fn max_depth(&self) -> usize {
+        let mut max = 0;
+        let mut stack: Vec<(tree_sitter::Node<'a>, usize)> = vec![(self.inner, 1)];
+        while let Some((node, depth)) = stack.pop() {
+            if depth > max {
+                max = depth;
+            }
+            let count = node.child_count();
+            for i in 0..count {
+                if let Some(child) = node.child(i as u32) {
+                    stack.push((child, depth + 1));
+                }
+            }
+        }
+        max
     }
 
     /// The child filling the given grammar field, if present.
@@ -597,5 +650,51 @@ mod tests {
         assert_eq!(d.message, "hi");
         assert_eq!(d.byte_range, target.byte_range());
         assert_eq!(d.range, target.range());
+    }
+
+    #[test]
+    fn point_at_handles_mid_codepoint_offset() {
+        // Regression for #36: a byte offset inside a multibyte char must not
+        // panic the internal `src[..b]` slice; it rounds down to the boundary.
+        let src = "x = é;\n"; // 'é' occupies bytes 4..6
+        let p = super::point_at(src, 5); // 5 is *inside* 'é'
+        assert_eq!(p.row, 0);
+        assert_eq!(p.column, 4); // rounded down to the char boundary at byte 4
+        // Boundary and past-EOF offsets still behave.
+        assert_eq!(super::point_at(src, 6).column, 6);
+        let _ = super::point_at(src, 999);
+    }
+
+    #[test]
+    fn reparse_with_mid_codepoint_edit_does_not_panic() {
+        // The only caller of `point_at` is `reparse`; an edit whose offsets land
+        // inside a multibyte char must not crash it (#36).
+        let old = "x = é;\n";
+        let new = "x = à;\n";
+        let edit = Edit {
+            start_byte: 5, // inside 'é'
+            old_end_byte: 5,
+            new_end_byte: 5,
+        };
+        let inc = parse(old).reparse(&edit, new);
+        assert_eq!(inc.source(), new);
+    }
+
+    #[test]
+    fn max_depth_is_iterative_and_safe_on_deep_input() {
+        // #35: a pathologically nested expression must compute its depth without
+        // recursing (no stack overflow) and report well above the safe bound, so
+        // a recursive consumer can bail instead of aborting.
+        let depth = 50_000;
+        let src = format!("x = {}1{};\n", "(".repeat(depth), ")".repeat(depth));
+        let cst = parse(&src);
+        let d = cst.root().max_depth();
+        assert!(
+            d > super::MAX_RECURSION_DEPTH,
+            "expected depth > {} on {depth} nested parens, got {d}",
+            super::MAX_RECURSION_DEPTH
+        );
+        // The iterative descendants() walk must also survive the same input.
+        assert!(cst.root().descendants().count() > depth);
     }
 }
