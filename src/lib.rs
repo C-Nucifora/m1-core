@@ -13,7 +13,7 @@ mod kind;
 mod syntax;
 
 pub use annotation::{Annotation, AnnotationArg, Annotations, Registry, annotations};
-pub use cst::{Children, Cst, Descendants, Node, parse};
+pub use cst::{Children, Cst, Descendants, MAX_RECURSION_DEPTH, Node, parse};
 pub use diagnostic::{Code, Diagnostic, Position, Range, Severity};
 pub use field::Field;
 pub use kind::Kind;
