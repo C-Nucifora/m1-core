@@ -33,6 +33,8 @@
 //! m1-core emits a [`Severity::Warning`] for any `@m1:` annotation whose kind is
 //! not registered — an unknown attribute, like an unknown `#[...]` in Rust.
 
+mod args;
+
 use crate::cst::{Cst, Node};
 use crate::diagnostic::{Code, Diagnostic, Range, Severity};
 use crate::kind::Kind;
@@ -273,7 +275,7 @@ fn is_comment(node: &Node) -> bool {
 /// Parse a comment's source text into `(kind, args)` if it is an `@m1:`
 /// annotation, else `None`.
 fn parse_comment(text: &str) -> Option<(String, Vec<AnnotationArg>)> {
-    let body = strip_comment_markers(text).trim_start();
+    let body = args::strip_comment_markers(text).trim_start();
     let rest = body.strip_prefix(MARKER)?;
     // Kind: a leading identifier `[A-Za-z][A-Za-z0-9_-]*`.
     let kind_end = rest
@@ -284,98 +286,14 @@ fn parse_comment(text: &str) -> Option<(String, Vec<AnnotationArg>)> {
         return None;
     }
     let after = rest[kind_end..].trim_start();
-    let args = match after.strip_prefix('(') {
+    let parsed = match after.strip_prefix('(') {
         Some(inner) => {
-            let close = find_close_paren(inner).unwrap_or(inner.len());
-            parse_args(&inner[..close])
+            let close = args::find_close_paren(inner).unwrap_or(inner.len());
+            args::parse_args(&inner[..close])
         }
         None => Vec::new(),
     };
-    Some((kind.to_string(), args))
-}
-
-/// Strip `//` or `/* … */` markers from a comment's raw text.
-fn strip_comment_markers(text: &str) -> &str {
-    if let Some(rest) = text.strip_prefix("//") {
-        rest
-    } else if let Some(rest) = text.strip_prefix("/*") {
-        rest.strip_suffix("*/").unwrap_or(rest)
-    } else {
-        text
-    }
-}
-
-/// Index of the top-level `)` in `s` (the arg list interior, after the `(`),
-/// respecting double-quoted strings. `None` if unmatched.
-fn find_close_paren(s: &str) -> Option<usize> {
-    let mut in_str = false;
-    for (i, c) in s.char_indices() {
-        match c {
-            '"' => in_str = !in_str,
-            ')' if !in_str => return Some(i),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Parse the interior of an arg list (between the parens) into arguments.
-fn parse_args(s: &str) -> Vec<AnnotationArg> {
-    split_top_level(s)
-        .into_iter()
-        .filter_map(|tok| {
-            let tok = tok.trim();
-            if tok.is_empty() {
-                return None;
-            }
-            match split_named(tok) {
-                Some((k, v)) => Some(AnnotationArg::Named {
-                    key: k.trim().to_string(),
-                    value: strip_quotes(v.trim()).to_string(),
-                }),
-                None => Some(AnnotationArg::Positional(strip_quotes(tok).to_string())),
-            }
-        })
-        .collect()
-}
-
-/// Split on top-level commas, respecting double-quoted strings.
-fn split_top_level(s: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut in_str = false;
-    let mut start = 0;
-    for (i, c) in s.char_indices() {
-        match c {
-            '"' => in_str = !in_str,
-            ',' if !in_str => {
-                out.push(&s[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    out.push(&s[start..]);
-    out
-}
-
-/// Split `key=value` on the first top-level `=` (not inside quotes), if present.
-fn split_named(tok: &str) -> Option<(&str, &str)> {
-    let mut in_str = false;
-    for (i, c) in tok.char_indices() {
-        match c {
-            '"' => in_str = !in_str,
-            '=' if !in_str => return Some((&tok[..i], &tok[i + 1..])),
-            _ => {}
-        }
-    }
-    None
-}
-
-/// Strip a single pair of surrounding double quotes, if present.
-fn strip_quotes(s: &str) -> &str {
-    s.strip_prefix('"')
-        .and_then(|x| x.strip_suffix('"'))
-        .unwrap_or(s)
+    Some((kind.to_string(), parsed))
 }
 
 #[cfg(test)]
