@@ -8,6 +8,28 @@ pub struct Position {
     pub column: u32,
 }
 
+/// Convert a byte offset into `source` to a 0-based [`Position`].
+///
+/// Lines are counted by `'\n'`; the column is the number of **characters**
+/// (codepoints) between the start of the current line and the offset, so it is
+/// correct for multi-byte input. An offset that lands inside a multi-byte
+/// character is rounded down to the enclosing char boundary; an offset past the
+/// end of `source` is clamped to its end. The canonical helper for turning a
+/// lint/typecheck byte offset into a line/column, replacing per-rule copies.
+pub fn byte_to_position(source: &str, byte_offset: usize) -> Position {
+    let mut offset = byte_offset.min(source.len());
+    while offset > 0 && !source.is_char_boundary(offset) {
+        offset -= 1;
+    }
+    let line = source[..offset].bytes().filter(|&b| b == b'\n').count();
+    let line_start = source[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let column = source[line_start..offset].chars().count();
+    Position {
+        line: line as u32,
+        column: column as u32,
+    }
+}
+
 /// A half-open range between two [`Position`]s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Range {
@@ -113,6 +135,46 @@ mod tests {
         assert_eq!(d.severity, Severity::Warning);
         assert_eq!(d.byte_range, root.byte_range());
         assert_eq!(d.range, root.range());
+    }
+
+    #[test]
+    fn byte_to_position_basic_and_multiline() {
+        let src = "ab\ncde\nf";
+        assert_eq!(byte_to_position(src, 0), Position { line: 0, column: 0 });
+        assert_eq!(byte_to_position(src, 1), Position { line: 0, column: 1 });
+        // Just after the first '\n' is the start of line 1.
+        assert_eq!(byte_to_position(src, 3), Position { line: 1, column: 0 });
+        assert_eq!(byte_to_position(src, 5), Position { line: 1, column: 2 });
+        assert_eq!(byte_to_position(src, 7), Position { line: 2, column: 0 });
+    }
+
+    #[test]
+    fn byte_to_position_counts_chars_not_bytes() {
+        // 'é' is two bytes; "x = é" — the char after 'é' is at column 5,
+        // even though it sits at byte offset 6.
+        let src = "x = é!";
+        let bang = src.find('!').unwrap();
+        assert_eq!(bang, 6); // byte offset
+        assert_eq!(
+            byte_to_position(src, bang),
+            Position { line: 0, column: 5 } // char column
+        );
+    }
+
+    #[test]
+    fn byte_to_position_mid_codepoint_rounds_down() {
+        let src = "é"; // bytes 0..2
+        // Offset 1 is inside 'é' -> rounds down to the boundary at 0.
+        assert_eq!(byte_to_position(src, 1), Position { line: 0, column: 0 });
+    }
+
+    #[test]
+    fn byte_to_position_past_end_is_clamped() {
+        let src = "abc\nde";
+        assert_eq!(byte_to_position(src, 999), Position { line: 1, column: 2 });
+        // Empty source never panics.
+        assert_eq!(byte_to_position("", 0), Position { line: 0, column: 0 });
+        assert_eq!(byte_to_position("", 5), Position { line: 0, column: 0 });
     }
 
     #[test]

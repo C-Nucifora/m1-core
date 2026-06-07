@@ -256,7 +256,10 @@ impl<'a> Node<'a> {
         })
     }
 
-    /// All direct children (named and anonymous).
+    /// All direct children (named and anonymous), collected into a `Vec`.
+    ///
+    /// Allocates a `Vec` on every call. For hot loops that only iterate the
+    /// children once, prefer the allocation-free [`Node::child_nodes`].
     pub fn children(&self) -> Vec<Node<'a>> {
         let mut cursor = self.inner.walk();
         self.inner
@@ -268,7 +271,11 @@ impl<'a> Node<'a> {
             .collect()
     }
 
-    /// Direct named children only (skips punctuation/keywords).
+    /// Direct named children only (skips punctuation/keywords), collected into
+    /// a `Vec`.
+    ///
+    /// Allocates a `Vec` on every call. For hot loops that only iterate the
+    /// children once, prefer the allocation-free [`Node::named_child_nodes`].
     pub fn named_children(&self) -> Vec<Node<'a>> {
         let mut cursor = self.inner.walk();
         self.inner
