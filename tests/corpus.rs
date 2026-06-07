@@ -42,9 +42,13 @@ fn ev_m1_corpus_parses_clean() {
         }
     }
 
+    // Corpus-agnostic: EV has ~80 scripts, AV ~44, a private corpus any number.
+    // Assert the walk found *something* (guards an empty/wrong dir) rather than a
+    // fixed EV-sized floor that rejects smaller corpora.
     assert!(
-        checked >= 80,
-        "expected >= 80 corpus scripts, found {checked}"
+        checked > 0,
+        "expected at least one corpus script in {}, found none",
+        dir.display()
     );
     assert!(
         failures.is_empty(),
@@ -99,7 +103,8 @@ fn corpus_traversal_is_faithful() {
         checked += 1;
     }
     assert!(
-        checked >= 80,
-        "expected >= 80 corpus scripts, found {checked}"
+        checked > 0,
+        "expected at least one corpus script in {}, found none",
+        dir.display()
     );
 }
