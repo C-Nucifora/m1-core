@@ -460,6 +460,24 @@ mod tests {
     }
 
     #[test]
+    fn annotation_arg_with_nested_parens() {
+        // A positional argument that is itself a parenthesised expression must
+        // be captured whole — the inner `)` must not end the arg list, and the
+        // inner `,` must not split the argument (regression for nested parens).
+        let anns = parse_anns("// @m1:trace(scale(x, 2), raw)\nlocal x = 1;\n");
+        assert_eq!(anns.all().len(), 1);
+        let a = &anns.all()[0];
+        assert_eq!(a.kind, "trace");
+        assert_eq!(
+            a.args,
+            vec![
+                AnnotationArg::Positional("scale(x, 2)".into()),
+                AnnotationArg::Positional("raw".into()),
+            ]
+        );
+    }
+
+    #[test]
     fn block_comment_annotation() {
         let anns = parse_anns("/* @m1:allow(L010) */\nlocal x = 1;\n");
         assert_eq!(anns.all().len(), 1);

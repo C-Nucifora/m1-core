@@ -20,13 +20,22 @@ pub(super) fn strip_comment_markers(text: &str) -> &str {
 }
 
 /// Index of the top-level `)` in `s` (the arg list interior, after the `(`),
-/// respecting double-quoted strings. `None` if unmatched.
+/// respecting double-quoted strings and nested parentheses. A `(` inside the
+/// interior (e.g. an argument that is itself a call like `scale(x, 2)`) opens a
+/// nested group whose `)` does not close the arg list. `None` if unmatched.
 pub(super) fn find_close_paren(s: &str) -> Option<usize> {
     let mut in_str = false;
+    let mut depth: usize = 0;
     for (i, c) in s.char_indices() {
         match c {
             '"' => in_str = !in_str,
-            ')' if !in_str => return Some(i),
+            '(' if !in_str => depth += 1,
+            ')' if !in_str => {
+                if depth == 0 {
+                    return Some(i);
+                }
+                depth -= 1;
+            }
             _ => {}
         }
     }
@@ -53,15 +62,19 @@ pub(super) fn parse_args(s: &str) -> Vec<AnnotationArg> {
         .collect()
 }
 
-/// Split on top-level commas, respecting double-quoted strings.
+/// Split on top-level commas, respecting double-quoted strings and nested
+/// parentheses (a comma inside a `( … )` group belongs to that argument).
 fn split_top_level(s: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut in_str = false;
+    let mut depth: usize = 0;
     let mut start = 0;
     for (i, c) in s.char_indices() {
         match c {
             '"' => in_str = !in_str,
-            ',' if !in_str => {
+            '(' if !in_str => depth += 1,
+            ')' if !in_str => depth = depth.saturating_sub(1),
+            ',' if !in_str && depth == 0 => {
                 out.push(&s[start..i]);
                 start = i + 1;
             }
@@ -72,13 +85,17 @@ fn split_top_level(s: &str) -> Vec<&str> {
     out
 }
 
-/// Split `key=value` on the first top-level `=` (not inside quotes), if present.
+/// Split `key=value` on the first top-level `=` (not inside quotes or a nested
+/// `( … )` group), if present.
 fn split_named(tok: &str) -> Option<(&str, &str)> {
     let mut in_str = false;
+    let mut depth: usize = 0;
     for (i, c) in tok.char_indices() {
         match c {
             '"' => in_str = !in_str,
-            '=' if !in_str => return Some((&tok[..i], &tok[i + 1..])),
+            '(' if !in_str => depth += 1,
+            ')' if !in_str => depth = depth.saturating_sub(1),
+            '=' if !in_str && depth == 0 => return Some((&tok[..i], &tok[i + 1..])),
             _ => {}
         }
     }
@@ -125,6 +142,34 @@ mod tests {
                     value: "-100".into(),
                 },
                 AnnotationArg::Positional("a, message".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn close_paren_respects_nested_parens() {
+        // `s` is the interior after the arg list's opening `(`. The first `)`
+        // here closes the inner `foo(x)`, not the arg list; the top-level close
+        // is the `)` that follows `bar`.
+        let s = "foo(x), bar) tail";
+        let i = find_close_paren(s).unwrap();
+        assert_eq!(&s[..i], "foo(x), bar");
+        // Quoted parens still do not count toward depth.
+        let q = "\"(\" ) end";
+        let j = find_close_paren(q).unwrap();
+        assert_eq!(&q[..j], "\"(\" ");
+    }
+
+    #[test]
+    fn nested_parens_are_one_argument() {
+        // A comma inside a nested-paren group must not split the argument, and
+        // the whole call expression must survive intact.
+        let args = parse_args("foo(a, b), bar");
+        assert_eq!(
+            args,
+            vec![
+                AnnotationArg::Positional("foo(a, b)".into()),
+                AnnotationArg::Positional("bar".into()),
             ]
         );
     }
