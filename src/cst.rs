@@ -532,6 +532,45 @@ mod tests {
     }
 
     #[test]
+    fn is_pattern_list_shape() {
+        // Grammar v0.5.0: `is (A or B)` is a compile-time pattern list, not a
+        // boolean binary_expression. Single-pattern is-clauses keep the plain
+        // expression shape; `or` outside an is-clause stays BinaryExpression.
+        let src = "when (Mode)\n{\n\tis (State.A or State.B)\n\t{\n\t\tx = 1;\n\t}\n\tis (Off)\n\t{\n\t\tx = 2;\n\t}\n}\ny = a or b;\n";
+        let cst = parse(src);
+        let clauses: Vec<Node> = cst
+            .root()
+            .descendants()
+            .filter(|n| n.kind() == Kind::IsClause)
+            .collect();
+        assert_eq!(clauses.len(), 2);
+
+        let multi = clauses[0].child_by_field(crate::Field::State).unwrap();
+        assert_eq!(multi.kind(), Kind::IsPatternList);
+        let patterns: Vec<Node> = multi
+            .named_children()
+            .into_iter()
+            .filter(|c| c.kind() == Kind::MemberExpression)
+            .collect();
+        assert_eq!(patterns.len(), 2, "two member-path patterns");
+        // The first pattern is reachable via the repeated `pattern` field too.
+        assert_eq!(
+            multi.child_by_field(crate::Field::Pattern).unwrap().kind(),
+            Kind::MemberExpression
+        );
+
+        let single = clauses[1].child_by_field(crate::Field::State).unwrap();
+        assert_eq!(single.kind(), Kind::Identifier, "single pattern unchanged");
+
+        let or_expr = cst
+            .root()
+            .descendants()
+            .find(|n| n.kind() == Kind::BinaryExpression)
+            .expect("y = a or b stays a BinaryExpression");
+        assert!(or_expr.text().contains("or"));
+    }
+
+    #[test]
     fn sibling_navigation() {
         let cst = parse("x = a + b;\n");
         let stmt = cst.root().children().into_iter().next().unwrap();
