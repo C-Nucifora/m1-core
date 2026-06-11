@@ -32,6 +32,12 @@
 //! Each tool owns the set of kinds it consumes; [`Registry`] is that set.
 //! m1-core emits a [`Severity::Warning`] for any `@m1:` annotation whose kind is
 //! not registered — an unknown attribute, like an unknown `#[...]` in Rust.
+//!
+//! [`Registry::seed`] carries the toolchain-defined kinds: `allow` (suppress a
+//! lint/typecheck code), `deprecated`, `unit`, `range`, `trace`,
+//! `requires-finite`, `safety-critical`, `source`, `external`, `sanitizes`,
+//! `clears` (m1-core#33), and `fmt` — m1-fmt's format-off markers
+//! `@m1:fmt(off)` / `@m1:fmt(on)` (m1-fmt#102).
 
 mod args;
 
@@ -159,6 +165,7 @@ impl Registry {
             "external",
             "sanitizes",
             "clears",
+            "fmt",
         ])
     }
 }
@@ -412,6 +419,21 @@ mod tests {
         let cst = parse("// @m1:allow(L010)\nlocal x = 1;\n");
         let anns = annotations(&cst, &Registry::seed());
         assert!(anns.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn fmt_kind_is_seeded() {
+        // m1-fmt's format-off markers (m1-fmt#102) must not trip the
+        // unknown-kind warning in tools running with the seed registry.
+        for src in [
+            "// @m1:fmt(off)\nlocal x = 1;\n",
+            "// @m1:fmt(on)\nlocal x = 1;\n",
+            "// @m1:fmt(skip)\nlocal x = 1;\n",
+        ] {
+            let anns = annotations(&parse(src), &Registry::seed());
+            assert!(anns.diagnostics().is_empty(), "warned on {src:?}");
+            assert_eq!(anns.all()[0].kind, "fmt");
+        }
     }
 
     #[test]
