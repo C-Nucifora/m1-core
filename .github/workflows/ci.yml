@@ -10,6 +10,12 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
 
+# Cancel superseded runs of the same branch/PR: every push otherwise queues a
+# full duplicate job matrix (m1-tools#27).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Least-privilege default for the whole workflow; jobs opt into more as needed.
 permissions:
   contents: read
@@ -40,6 +46,15 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo fmt --all -- --check
+
+  doc:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 
   audit:
     name: Security Audit

@@ -251,4 +251,30 @@ mod tests {
             "src/field.rs is stale; run `cargo run -p xtask -- gen-kinds`"
         );
     }
+
+    /// xtask and the crate must pin the same tree-sitter-m1 tag: the two
+    /// `*_is_fresh` guards above regenerate from xtask's grammar but diff
+    /// against files generated from the crate's, so a version skew makes them
+    /// vacuous — they'd keep passing while kind.rs drifts from the grammar the
+    /// crate actually parses with (#48).
+    #[test]
+    fn grammar_pins_match() {
+        let tag_of = |manifest: &str| {
+            manifest
+                .lines()
+                .find(|l| l.trim_start().starts_with("tree-sitter-m1"))
+                .and_then(|l| l.split("tag = \"").nth(1))
+                .and_then(|rest| rest.split('"').next())
+                .map(str::to_string)
+                .expect("tree-sitter-m1 dep with a tag")
+        };
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let xtask = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+        let crate_ = std::fs::read_to_string(dir.join("../Cargo.toml")).unwrap();
+        assert_eq!(
+            tag_of(&xtask),
+            tag_of(&crate_),
+            "xtask/Cargo.toml and Cargo.toml must pin the same tree-sitter-m1 tag"
+        );
+    }
 }

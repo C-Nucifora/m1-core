@@ -43,6 +43,21 @@ fn make_parser() -> tree_sitter::Parser {
     parser
 }
 
+thread_local! {
+    // One parser per thread, reused across parses: `Parser::set_language`
+    // installs the compiled grammar automaton, which is too expensive to redo
+    // on every `parse`/`reparse` call — the LSP hits `reparse` per keystroke
+    // (#50). `tree_sitter::Parser` is not `Sync`, so thread-local is the
+    // correct sharing granularity.
+    static PARSER: std::cell::RefCell<tree_sitter::Parser> =
+        std::cell::RefCell::new(make_parser());
+}
+
+/// Run `f` with the thread's cached parser.
+fn with_parser<T>(f: impl FnOnce(&mut tree_sitter::Parser) -> T) -> T {
+    PARSER.with(|p| f(&mut p.borrow_mut()))
+}
+
 /// tree-sitter `Point` (row + byte-column) of `byte` within `src`.
 fn point_at(src: &str, byte: usize) -> tree_sitter::Point {
     let mut b = byte.min(src.len());
@@ -62,9 +77,7 @@ fn point_at(src: &str, byte: usize) -> tree_sitter::Point {
 /// Parse M1 source into a [`Cst`]. Infallible: grammar load is a build
 /// invariant and tree-sitter always returns a tree.
 pub fn parse(src: &str) -> Cst {
-    let tree = make_parser()
-        .parse(src, None)
-        .expect("tree-sitter always returns a tree");
+    let tree = with_parser(|p| p.parse(src, None)).expect("tree-sitter always returns a tree");
     Cst {
         tree,
         source: src.to_string(),
@@ -92,8 +105,7 @@ impl Cst {
         };
         let mut old_tree = self.tree.clone();
         old_tree.edit(&input_edit);
-        let tree = make_parser()
-            .parse(new_src, Some(&old_tree))
+        let tree = with_parser(|p| p.parse(new_src, Some(&old_tree)))
             .expect("tree-sitter always returns a tree");
         Cst {
             tree,
@@ -393,6 +405,30 @@ impl<'a> Iterator for Children<'a> {
     }
 }
 
+impl<'a> DoubleEndedIterator for Children<'a> {
+    // Reverse iteration without collecting: work-stack traversals push children
+    // in reverse to pop them in source order, and `child_nodes().rev()` lets
+    // them do so allocation-free instead of via `children()` (#49).
+    fn next_back(&mut self) -> Option<Node<'a>> {
+        while self.index < self.count {
+            self.count -= 1;
+            let i = self.count;
+            let child = if self.named_only {
+                self.parent.named_child(i as u32)
+            } else {
+                self.parent.child(i as u32)
+            };
+            if let Some(inner) = child {
+                return Some(Node {
+                    inner,
+                    source: self.source,
+                });
+            }
+        }
+        None
+    }
+}
+
 /// Pre-order iterator over a node and all of its descendants (node first, then
 /// each child's subtree, left to right). Uses a single worklist for the whole
 /// traversal rather than allocating a child vector per node.
@@ -607,6 +643,46 @@ mod tests {
         assert!(iter_all.len() >= iter_named.len());
         let first = if_stmt.child_nodes().next().unwrap();
         assert_eq!(first.byte_range(), if_stmt.children()[0].byte_range());
+    }
+
+    #[test]
+    fn child_nodes_rev_matches_reversed_children() {
+        let cst = parse("if (a > 1)\n{\n\tb = 2;\n}\n");
+        let if_stmt = cst.root().children().into_iter().next().unwrap();
+
+        let rev_iter: Vec<_> = if_stmt
+            .child_nodes()
+            .rev()
+            .map(|n| n.byte_range())
+            .collect();
+        let mut rev_vec: Vec<_> = if_stmt.children().iter().map(|n| n.byte_range()).collect();
+        rev_vec.reverse();
+        assert_eq!(rev_iter, rev_vec);
+
+        let rev_named: Vec<_> = if_stmt
+            .named_child_nodes()
+            .rev()
+            .map(|n| n.byte_range())
+            .collect();
+        let mut named_vec: Vec<_> = if_stmt
+            .named_children()
+            .iter()
+            .map(|n| n.byte_range())
+            .collect();
+        named_vec.reverse();
+        assert_eq!(rev_named, named_vec);
+
+        // Meeting in the middle yields each child exactly once.
+        let n = if_stmt.children().len();
+        let mut iter = if_stmt.child_nodes();
+        let mut seen = 0;
+        while iter.next().is_some() {
+            seen += 1;
+            if iter.next_back().is_some() {
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, n);
     }
 
     #[test]
