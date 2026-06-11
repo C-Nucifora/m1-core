@@ -57,10 +57,10 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "m1-core"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "tree-sitter",
- "tree-sitter-m1",
+ "tree-sitter-m1 0.6.0",
 ]
 
 [[package]]
@@ -212,6 +212,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-m1"
+version = "0.6.0"
+source = "git+https://github.com/C-Nucifora/tree-sitter-m1.git?tag=v0.6.0#c83a032bb6b53994cc8f2f9e72c03c028b449135"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -222,7 +231,7 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "serde_json",
- "tree-sitter-m1",
+ "tree-sitter-m1 0.5.0",
 ]
 
 [[package]]
