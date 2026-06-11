@@ -6,4 +6,8 @@ publish = false
 
 [dependencies]
 serde_json = "1"
-tree-sitter-m1 = { git = "https://github.com/C-Nucifora/tree-sitter-m1.git", tag = "v0.5.0" }
+# Must pin the SAME tag as ../Cargo.toml: the kind_rs_is_fresh/field_rs_is_fresh
+# guards regenerate from THIS dep's node-types.json and diff against files
+# generated from the crate's dep — a skew silently disarms them (#48). Enforced
+# by the grammar_pins_match test.
+tree-sitter-m1 = { git = "https://github.com/C-Nucifora/tree-sitter-m1.git", tag = "v0.6.0" }

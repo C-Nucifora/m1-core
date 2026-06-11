@@ -32,7 +32,9 @@ fn walk(root: Node, out: &mut Vec<Diagnostic>) {
             // elsewhere are still reported — only this node's subtree is skipped.
             continue;
         }
-        for child in node.children().into_iter().rev() {
+        // `child_nodes().rev()` is allocation-free; `children()` would build a
+        // `Vec` per node visited, once per file change on the LSP path (#49).
+        for child in node.child_nodes().rev() {
             stack.push(child);
         }
     }
