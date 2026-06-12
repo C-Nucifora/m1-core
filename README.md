@@ -15,62 +15,50 @@ for node in cst.root().children() {
         _ => {}
     }
 }
-let diagnostics = cst.syntax_diagnostics(); // Vec<m1_core::Diagnostic>
+let diagnostics = cst.syntax_diagnostics();
 ```
 
-- **CST access** — `parse`, `Cst`, `Node` (`kind`, `children`, `field`,
-  `byte_range`, …), typed `Kind`/`Field` enums generated from the grammar, and
-  iterator helpers (`Children`, `Descendants`).
-- **Incremental reparse** — `Edit` + `Cst::reparse` for editor-style updates
-  without reparsing from scratch.
-- **Diagnostics** — `syntax_diagnostics()` with `Diagnostic`, `Severity`,
-  `Code`, `Range`, and `byte_to_position` for offset → line/column conversion.
-  Traversal is iterative (explicit work-stack), so pathologically deep input
-  cannot overflow the call stack.
-- **Operator predicates** — `is_binary_op`, `is_unary_op`,
-  `is_compound_assign`, shared by the formatter and linter.
-- **Annotations** — see below.
+- **CST access** — a typed tree (`Cst`/`Node` with `Kind`/`Field` enums
+  generated from the grammar), plus incremental reparse for editor-style
+  updates.
+- **Syntax diagnostics** — error/warning extraction with offset → line/column
+  conversion. Traversal is iterative, so pathologically deep input cannot
+  overflow the call stack.
+- **Annotations** — `@m1:` comment attributes, parsed once here and consumed
+  by every downstream tool (see below).
+- Small shared helpers the formatter and linter would otherwise duplicate,
+  such as operator classification.
 
-`Position::column` is a byte offset; UTF-16/LSP position conversion is the
-responsibility of `m1-lsp`.
+Full API documentation is in the rustdoc (`cargo doc --open`).
 
 ## Layering: type inference lives in `m1-typecheck`
 
 `m1-core` deliberately exposes only *structural* CST access and **no type-query
 API on `Node`**. Asking "what type does this expression resolve to?" requires
 the project symbol model (`.m1prj`/`.m1cfg`), which lives in the layer above
-this crate, in `m1-typecheck` (`resolve(path, scope)` and
-`typer::type_of(node, scope)`). Putting an `infer_type(node, …)` here would
-invert that dependency.
+this crate, in `m1-typecheck`. Putting type inference here would invert that
+dependency.
 
 ## Annotations (`// @m1:<kind>(args)`)
 
 Comment-embedded attributes — the M1 analogue of Rust attributes /
-`// eslint-disable` — parsed once here and consumed by every downstream tool.
-They ride inside ordinary `//` (and `/* */`) comments, so they are valid M1 and
-need no grammar change.
+`// eslint-disable`. They ride inside ordinary comments, so they are valid M1
+and need no grammar change:
 
-```rust
-// // @m1:allow(L010, T030)   ← suppress L010/T030 on the following statement
-// Front Torque = 1; // @m1:safety-critical   ← trailing form attaches to this statement
-let reg = m1_core::Registry::seed();           // or build your own with only the kinds you consume
-let anns = m1_core::annotations(&cst, &reg);
-for a in anns.all() { /* a.kind, a.args, a.target_byte_range */ }
-let warnings = anns.diagnostics();             // unknown-kind warnings (Code::Annotation)
-let suppressed = anns.is_allowed("L010", byte_offset); // honour @allow when filtering diagnostics
+```c
+// @m1:allow(L010, T030)        suppresses those diagnostics on the next statement
+Front Torque = 1; // @m1:safety-critical    trailing form attaches to this statement
 ```
 
-An annotation attaches to a **construct**: a comment trailing a statement on
-the same line attaches to that statement; otherwise it is *leading* and
-attaches to the next statement (so annotations stack on consecutive lines above
-their target). A tool registers the kinds it owns; m1-core emits a
-`Severity::Warning` (`Code::Annotation`) for any `@m1:` kind not in the
-registry — an unknown attribute.
+A comment trailing a statement attaches to that statement; otherwise it
+attaches to the next one (so annotations stack on consecutive lines above
+their target). Each tool registers the annotation kinds it owns, and m1-core
+warns on any `@m1:` kind no tool recognises.
 
 ## Usage
 
 Not published to crates.io; consumed via a versioned git tag (the whole
-toolchain uses this scheme, and Dependabot keeps consumers current). Pin the
+toolchain uses this scheme). Pin the
 [latest release](https://github.com/C-Nucifora/m1-core/releases):
 
 ```toml
@@ -81,32 +69,20 @@ m1-core = { git = "https://github.com/C-Nucifora/m1-core.git", tag = "v0.10.0" }
 The grammar dependency (`tree-sitter-m1`) is itself a versioned git tag, so the
 crate builds from a standalone clone.
 
-## Codegen
-
-`src/kind.rs` and `src/field.rs` are generated from `tree-sitter-m1`'s
-`node-types.json`. After a grammar release, bump the `tree-sitter-m1` tag and
-regenerate:
-
-```sh
-cargo run -p xtask -- gen-kinds
-```
-
-Freshness tests (`kind_rs_is_fresh` / `field_rs_is_fresh`) fail if the
-committed files are stale.
-
 ## Development
 
 The CI gate is `cargo test`, `cargo clippy --all-targets -- -D warnings`, and
-`cargo fmt --all -- --check`, on stable and on the MSRV (Rust 1.88). Releases
-are cut by bumping `version` in `Cargo.toml` on `main`; the tag is the
-deliverable (source-only — consumers build from the tag).
+`cargo fmt --all -- --check`, on stable and on the MSRV. Releases are cut by
+bumping `version` in `Cargo.toml` on `main`; the tag is the deliverable
+(source-only — consumers build from the tag).
+
+`src/kind.rs` and `src/field.rs` are generated from the grammar; after a
+`tree-sitter-m1` bump, regenerate with `cargo run -p xtask -- gen-kinds`
+(freshness tests fail CI if the committed files are stale).
 
 ## License
 
-Licensed under the GNU General Public License v3.0 or later
-(GPL-3.0-or-later) — see [LICENSE](LICENSE).
-
-Copyright (C) 2026 The M1 Tools authors.
+GPL-3.0-or-later — see [LICENSE](LICENSE).
 
 ## Trademark
 
