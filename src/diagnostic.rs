@@ -1,7 +1,10 @@
 //! Shared diagnostic types emitted by every M1 tool.
 
-/// A 0-based source position. `column` is a **byte** offset within `line`
-/// (UTF-16/LSP encoding conversion is the responsibility of m1-lsp).
+/// A 0-based source position. `column` counts **characters** (Unicode scalar
+/// values) within `line` — the one column unit everywhere in m1-core, whether
+/// the position came from [`byte_to_position`] or `Node::range()`. Tools that
+/// need a different encoding (m1-lsp's UTF-16/UTF-8 LSP positions) convert
+/// from byte offsets instead, via `Diagnostic::byte_range`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
     pub line: u32,
