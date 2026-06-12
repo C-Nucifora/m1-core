@@ -74,6 +74,24 @@ fn point_at(src: &str, byte: usize) -> tree_sitter::Point {
     tree_sitter::Point { row, column }
 }
 
+/// Convert a tree-sitter `Point` (row + byte-column) at `byte` into a
+/// [`Position`] with a **character** column, the single column unit for
+/// `Position` (#57). Cheaper than [`crate::byte_to_position`]: the line start
+/// is already known from the point, so only the current line is scanned.
+fn char_position(source: &str, byte: usize, point: tree_sitter::Point) -> Position {
+    let line_start = byte.saturating_sub(point.column);
+    let column = source
+        .get(line_start..byte)
+        .map(|line| line.chars().count())
+        // Defensive: out-of-range or non-boundary slices (incremental-reparse
+        // edges) fall back to the byte column rather than panicking.
+        .unwrap_or(point.column);
+    Position {
+        line: point.row as u32,
+        column: column as u32,
+    }
+}
+
 /// Parse M1 source into a [`Cst`]. Infallible: grammar load is a build
 /// invariant and tree-sitter always returns a tree.
 pub fn parse(src: &str) -> Cst {
@@ -208,19 +226,14 @@ impl<'a> Node<'a> {
         self.inner.byte_range()
     }
 
-    /// Line/column range (0-based; column is a byte offset within the line).
+    /// Line/column range (0-based; column counts **characters** within the
+    /// line, matching [`crate::byte_to_position`] — see [`Position`]).
     pub fn range(&self) -> Range {
         let s = self.inner.start_position();
         let e = self.inner.end_position();
         Range {
-            start: Position {
-                line: s.row as u32,
-                column: s.column as u32,
-            },
-            end: Position {
-                line: e.row as u32,
-                column: e.column as u32,
-            },
+            start: char_position(self.source, self.inner.start_byte(), s),
+            end: char_position(self.source, self.inner.end_byte(), e),
         }
     }
 
@@ -534,6 +547,26 @@ mod tests {
         assert_eq!(target.range().start.column, 0);
         assert_eq!(target.range().end.column, 5);
         assert_eq!(&src[target.byte_range()], "Ratio");
+    }
+
+    #[test]
+    fn range_columns_count_chars_after_multibyte() {
+        // `°` is two bytes. Both declarations share line 0, so the second
+        // one's column must agree with `byte_to_position` (characters, not
+        // bytes) — the single column invariant for `Position` (#57).
+        let src = "local a = \"°°\"; local b = 1;\n";
+        let cst = parse(src);
+        let second = cst.root().children().into_iter().nth(1).unwrap();
+        assert_eq!(second.text(), "local b = 1;");
+        let start_byte = second.byte_range().start;
+        assert_eq!(
+            second.range().start,
+            crate::byte_to_position(src, start_byte)
+        );
+        assert_eq!(
+            second.range().start.column as usize,
+            src[..start_byte].chars().count()
+        );
     }
 
     #[test]
