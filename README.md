@@ -57,6 +57,30 @@ for node in cst.root().children() {
 let diagnostics = cst.syntax_diagnostics(); // Vec<m1_core::Diagnostic>
 ```
 
+CST traversal helpers used by downstream tools:
+
+```rust
+use m1_core::{Field, Kind, MAX_RECURSION_DEPTH};
+use m1_core::{is_binary_op, is_unary_op, is_compound_assign};
+
+// Guard against adversarially deep trees before recursing.
+if cst.root().max_depth() > MAX_RECURSION_DEPTH { /* bail */ }
+
+// Named-field access (returns Option<Node>).
+if let Some(cond) = node.child_by_field(Field::Condition) { /* ... */ }
+
+// Kind predicates — avoid a long match arm per operator.
+if is_binary_op(node.kind()) { /* ... */ }
+if is_unary_op(node.kind())  { /* ... */ }
+if is_compound_assign(node.kind()) { /* ... */ }
+
+// Lazy depth-first descendant iterator (no Vec allocation per level).
+for desc in node.descendants() { /* ... */ }
+
+// Byte-offset → LSP-style line/column conversion.
+let pos = m1_core::byte_to_position(src, byte_offset);
+```
+
 ## Annotations (`// @m1:<kind>(args)`)
 
 Comment-embedded attributes — the M1 analogue of Rust attributes / `// eslint-disable` —
@@ -81,12 +105,14 @@ A tool registers the kinds it owns; m1-core emits a `Severity::Warning`
 
 ## Codegen
 
-`src/kind.rs` is generated from `tree-sitter-m1`'s `node-types.json`. After a
-grammar change, regenerate it:
+`src/kind.rs` and `src/field.rs` are both generated from `tree-sitter-m1`'s
+`node-types.json`. After a grammar change, regenerate both with one command:
 
     cargo run -p xtask -- gen-kinds
 
-A test (`xtask`'s `kind_rs_is_fresh`) fails if the committed file is stale.
+Two freshness tests (`xtask`'s `kind_rs_is_fresh` and `field_rs_is_fresh`) fail
+if either committed file is stale — a stale `field.rs` silently drops named-field
+accessors, so both guards must stay green.
 
 ## Test
 
@@ -98,10 +124,6 @@ These are deliberate v1 scoping/behavior choices, tracked for later increments:
 
 - **No symbol model yet.** `.m1prj`/`.m1cfg` loading, name resolution, and types
   are deferred until `m1-typecheck` drives their shape.
-- **Diagnostic double-reporting.** `syntax_diagnostics()` emits a `MissingToken`
-  for a MISSING node *in addition to* the `SyntaxError` for its enclosing ERROR
-  node, so a single mistake can surface as two overlapping diagnostics. Acceptable
-  for v1; revisit before wiring diagnostics into `m1-lsp`.
 - **Generic ERROR message.** ERROR nodes report `"syntax error"` without the
   offending token text.
 - **Iterative tree walk.** `syntax_diagnostics()` traverses with an explicit
