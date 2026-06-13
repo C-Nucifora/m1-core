@@ -84,8 +84,26 @@ fn char_position(source: &str, byte: usize, point: tree_sitter::Point) -> Positi
         .get(line_start..byte)
         .map(|line| line.chars().count())
         // Defensive: out-of-range or non-boundary slices (incremental-reparse
-        // edges) fall back to the byte column rather than panicking.
-        .unwrap_or(point.column);
+        // edges). `point.column` is a *byte* count, which is wrong for a
+        // multi-byte line; derive a character count instead by clamping both
+        // ends to char boundaries and counting codepoints.
+        .unwrap_or_else(|| {
+            let clamped_byte = {
+                let mut b = byte.min(source.len());
+                while b > 0 && !source.is_char_boundary(b) {
+                    b -= 1;
+                }
+                b
+            };
+            let clamped_start = {
+                let mut s = line_start.min(source.len());
+                while s > 0 && !source.is_char_boundary(s) {
+                    s -= 1;
+                }
+                s
+            };
+            source[clamped_start..clamped_byte].chars().count()
+        });
     Position {
         line: point.row as u32,
         column: column as u32,
@@ -813,6 +831,62 @@ mod tests {
         assert_eq!(d.message, "hi");
         assert_eq!(d.byte_range, target.byte_range());
         assert_eq!(d.range, target.range());
+    }
+
+    #[test]
+    fn char_position_fallback_yields_char_column_not_byte_column() {
+        // Construct a case where `source.get(line_start..byte)` returns `None`,
+        // forcing the defensive fallback in `char_position`. This happens when
+        // `line_start` lands inside a multibyte codepoint (not a char boundary).
+        //
+        // Source: "éx" — 'é' is 2 bytes (0..2), 'x' is 1 byte (2..3).
+        // We build a Point with row=0, column=2 (byte-column for 'x') but then
+        // shift `byte` to 3 (end of 'x') while keeping point.column at 2, so
+        // line_start = 3 - 2 = 1, which is inside 'é' and not a char boundary.
+        // `.get(1..3)` → None → fallback fires.
+        //
+        // The correct char column for byte 3 (end of "éx") is 2 (two chars).
+        // The buggy fallback would return point.column = 2 which happens to be
+        // numerically equal here — so we need a case where bytes ≠ chars:
+        //
+        // Source: "ééx" — each 'é' is 2 bytes; 'x' is at byte 4, end at byte 5.
+        // Point with column=3 (odd byte offset into "ééx", so line_start=5-3=2,
+        // which is a char boundary between the two 'é' chars). That won't
+        // trigger the fallback.
+        //
+        // Better: "éx" at byte=3, point.column=2; line_start=1 (inside 'é').
+        // Char column for byte 3 (end of "éx") = 2 chars. Fallback returns 2
+        // (same number) — not a detectable mismatch here.
+        //
+        // Use "ééy" (4 bytes for "éé", 1 byte 'y' at byte 4, end byte 5).
+        // Force point.column=3 so line_start=5-3=2 (char boundary between the
+        // two 'é'). That's valid, not a fallback trigger.
+        //
+        // The key is: need line_start to be INSIDE a multibyte char AND the
+        // correct char count to differ from point.column (bytes).
+        //
+        // "é_y" where '_' is also a 2-byte char (e.g. another 'é'):
+        // source = "éé" followed by ASCII token. Take byte=5 (end of "éé" + 1 byte
+        // 'y'), point.column=4 (bytes from start-of-line to byte 4 = end of "éé"),
+        // line_start = 5-4 = 1 (inside first 'é') → fallback fires.
+        // Correct char column = 2 chars for "éé" prefix + 1 'y' char? No — byte=5
+        // is end of 'y'. Chars from line start (0) to byte 5: "ééy" = 3 chars.
+        // Byte column (point.column) we provided = 4. So 4 ≠ 3: detectable!
+        //
+        // Let's use: source = "ééy", byte = 5, point = {row:0, column:4}.
+        // line_start = 5 - 4 = 1 (inside first 'é', not a char boundary) → None.
+        // Fallback returns 4 (bytes). Correct answer: 3 chars. Assert column==3.
+        let source = "ééy"; // bytes: é(0..2) é(2..4) y(4..5)
+        let byte = 5usize; // one past 'y' (end of string)
+        let point = tree_sitter::Point { row: 0, column: 4 }; // byte-column of 'y' end
+        // line_start = 5 - 4 = 1, which is inside the first 'é' → get(1..5) = None
+        let pos = super::char_position(source, byte, point);
+        assert_eq!(pos.line, 0);
+        // Bug: fallback returns point.column=4; fix should return 3 (three chars).
+        assert_eq!(
+            pos.column, 3,
+            "fallback must return char count (3), not byte count (4)"
+        );
     }
 
     #[test]
