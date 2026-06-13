@@ -63,7 +63,7 @@ toolchain uses this scheme). Pin the
 
 ```toml
 [dependencies]
-m1-core = { git = "https://github.com/C-Nucifora/m1-core.git", tag = "v0.10.0" }
+m1-core = { git = "https://github.com/C-Nucifora/m1-core.git", tag = "v0.12.0" }
 ```
 
 The grammar dependency (`tree-sitter-m1`) is itself a versioned git tag, so the
