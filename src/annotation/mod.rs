@@ -638,4 +638,166 @@ mod tests {
         assert_eq!(&src[target.clone()], "y = 1;");
         assert!(anns.is_allowed("L010", target.start + 1));
     }
+
+    // ── Registry builder API ─────────────────────────────────────────────────
+
+    #[test]
+    fn registry_new_is_empty() {
+        let reg = Registry::new();
+        assert!(!reg.knows("allow"));
+        assert!(!reg.knows("safety-critical"));
+        assert!(!reg.knows(""));
+    }
+
+    #[test]
+    fn registry_with_kinds_populates() {
+        let reg = Registry::with_kinds(["allow", "trace", "unit"]);
+        assert!(reg.knows("allow"));
+        assert!(reg.knows("trace"));
+        assert!(reg.knows("unit"));
+        assert!(!reg.knows("deprecated"));
+        assert!(!reg.knows("bogus"));
+    }
+
+    #[test]
+    fn registry_register_chains_and_reflects() {
+        let mut reg = Registry::new();
+        reg.register("allow").register("fmt").register("range");
+        assert!(reg.knows("allow"));
+        assert!(reg.knows("fmt"));
+        assert!(reg.knows("range"));
+        assert!(!reg.knows("trace"));
+        assert!(!reg.knows("bogus"));
+    }
+
+    #[test]
+    fn registry_custom_unknown_kind_warns_only_for_unregistered() {
+        // Build a registry that knows only "allow"; "trace" is unknown to it.
+        let mut reg = Registry::new();
+        reg.register("allow");
+
+        let cst = parse("// @m1:allow(L010)\n// @m1:trace\nlocal x = 1;\n");
+        let anns = annotations(&cst, &reg);
+
+        // Exactly one warning — for `trace`, not for `allow`.
+        assert_eq!(anns.diagnostics().len(), 1);
+        let d = &anns.diagnostics()[0];
+        assert_eq!(d.code, Code::Annotation);
+        assert_eq!(d.severity, Severity::Warning);
+        assert!(
+            d.message.contains("trace"),
+            "expected trace in message, got: {}",
+            d.message
+        );
+
+        // Both annotations are still parsed.
+        assert_eq!(anns.all().len(), 2);
+    }
+
+    #[test]
+    fn registry_no_warnings_when_all_kinds_registered() {
+        let reg = Registry::with_kinds(["allow", "trace"]);
+        let cst = parse("// @m1:allow(L010)\n// @m1:trace\nlocal x = 1;\n");
+        let anns = annotations(&cst, &reg);
+        assert!(anns.diagnostics().is_empty());
+    }
+
+    // ── Annotation::positionals() ────────────────────────────────────────────
+
+    #[test]
+    fn positionals_excludes_named_args() {
+        // Mixed arg list: two positionals + one named.
+        let anns = parse_anns("// @m1:allow(L010, T030, key=val)\nlocal x = 1;\n");
+        let a = &anns.all()[0];
+
+        let pos: Vec<&str> = a.positionals().collect();
+        assert_eq!(pos, ["L010", "T030"]);
+    }
+
+    #[test]
+    fn positionals_empty_when_all_named() {
+        let anns = parse_anns("// @m1:range(min=-100, max=100)\nlocal x = 1;\n");
+        let a = &anns.all()[0];
+        assert_eq!(a.positionals().count(), 0);
+    }
+
+    #[test]
+    fn positionals_all_when_no_named_args() {
+        let anns = parse_anns("// @m1:allow(L010, T030)\nlocal x = 1;\n");
+        let a = &anns.all()[0];
+        let pos: Vec<&str> = a.positionals().collect();
+        assert_eq!(pos, ["L010", "T030"]);
+    }
+
+    #[test]
+    fn positionals_empty_when_no_args() {
+        let anns = parse_anns("// @m1:safety-critical\nFront Torque = 1;\n");
+        let a = &anns.all()[0];
+        assert_eq!(a.positionals().count(), 0);
+    }
+
+    // ── Annotations::for_target_start() ─────────────────────────────────────
+
+    #[test]
+    fn for_target_start_matches_exact_start_byte() {
+        let src = "// @m1:allow(L010)\nlocal x = 1;\n";
+        let cst = parse(src);
+        let anns = annotations(&cst, &Registry::seed());
+        let stmt = first_stmt(&cst);
+        let start = stmt.byte_range().start;
+
+        let found = anns.for_target_start(start);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].kind, "allow");
+    }
+
+    #[test]
+    fn for_target_start_empty_for_wrong_offset() {
+        let src = "// @m1:allow(L010)\nlocal x = 1;\n";
+        let cst = parse(src);
+        let anns = annotations(&cst, &Registry::seed());
+        let stmt = first_stmt(&cst);
+        let start = stmt.byte_range().start;
+
+        // One byte before the statement start: no match.
+        if start > 0 {
+            assert!(anns.for_target_start(start - 1).is_empty());
+        }
+        // Mid-statement: no match.
+        assert!(anns.for_target_start(start + 3).is_empty());
+        // Past end of source: no match.
+        assert!(anns.for_target_start(src.len() + 100).is_empty());
+    }
+
+    #[test]
+    fn for_target_start_returns_multiple_annotations_for_same_target() {
+        // Two stacked annotations both resolve to the same statement start.
+        let src = "// @m1:requires-finite\n// @m1:safety-critical\nFront Torque = 1;\n";
+        let cst = parse(src);
+        let anns = annotations(&cst, &Registry::seed());
+        let stmt = first_stmt(&cst);
+        let start = stmt.byte_range().start;
+
+        let found = anns.for_target_start(start);
+        assert_eq!(found.len(), 2);
+        let kinds: Vec<&str> = found.iter().map(|a| a.kind.as_str()).collect();
+        assert!(kinds.contains(&"requires-finite"));
+        assert!(kinds.contains(&"safety-critical"));
+    }
+
+    #[test]
+    fn for_target_start_empty_when_annotation_is_dangling() {
+        // A dangling annotation has no target, so no start byte is indexed.
+        let src = "local x = 1;\n// @m1:trace\n";
+        let cst = parse(src);
+        let anns = annotations(&cst, &Registry::seed());
+
+        // The annotation exists but has no target.
+        let a = anns.all().iter().find(|a| a.kind == "trace").unwrap();
+        assert!(a.target_byte_range.is_none());
+
+        // for_target_start returns nothing for any plausible byte.
+        assert!(anns.for_target_start(0).is_empty());
+        assert!(anns.for_target_start(src.len()).is_empty());
+    }
 }
