@@ -213,6 +213,14 @@ impl<'a> Node<'a> {
         self.inner.kind()
     }
 
+    /// Whether this is a *named* node (a grammar rule such as a statement or
+    /// expression) rather than an anonymous token (punctuation/keyword like
+    /// `{`, `}`, `)`, `+`). Annotation attachment targets a named construct, so
+    /// it uses this to skip anonymous siblings.
+    pub fn is_named(&self) -> bool {
+        self.inner.is_named()
+    }
+
     /// The source text this node spans.
     pub fn text(&self) -> &'a str {
         // Defensive: a node's byte range is normally within source, but guard
