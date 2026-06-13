@@ -27,6 +27,12 @@
 //!   (skipping intervening comment lines, so annotations stack on consecutive
 //!   lines above their target).
 //!
+//! The target is always a *named statement* node, never an anonymous
+//! punctuation token (`{`, `}`, `)`, `+`) — attaching to such a token is a
+//! silent no-op (m1-core#61). A comment buried inside an expression climbs to
+//! its enclosing statement; one with no statement to attach to is *dangling*
+//! (`target_byte_range` is `None`).
+//!
 //! ## Registry + unknown kinds
 //!
 //! Each tool owns the set of kinds it consumes; [`Registry`] is that set.
@@ -255,28 +261,75 @@ pub fn annotations(cst: &Cst, registry: &Registry) -> Annotations {
 }
 
 /// Resolve the construct a comment annotation applies to.
+///
+/// The target must be a *named statement* node — never an anonymous punctuation
+/// token (`{`, `}`, `)`, `+`). Attaching to such a token is a silent no-op:
+/// `is_allowed` checks whether the target byte range contains the diagnostic
+/// offset, and a one-byte `{` never contains the statement it precedes
+/// (m1-core#61). So we skip anonymous siblings, and if a comment is buried
+/// inside an expression (no usable statement sibling) we climb to the enclosing
+/// statement instead. Returns `None` when there is no statement to attach to.
 fn attachment_target<'a>(comment: &Node<'a>) -> Option<Node<'a>> {
-    // Trailing: a comment on the same line as, and after, a preceding statement.
+    // Trailing: a named statement on the same line as, and before, the comment.
     if let Some(prev) = comment.prev_sibling()
-        && !is_comment(&prev)
+        && is_statement(&prev)
         && prev.range().end.line == comment.range().start.line
     {
         return Some(prev);
     }
-    // Leading: the next sibling that is not itself a comment (so stacked
-    // annotation/comment lines all resolve to the same following statement).
+    // Leading: the next named statement sibling, skipping comments and anonymous
+    // tokens (so stacked annotation/comment lines all resolve to the same
+    // following statement, and a trailing `{`/`)` token is not mistaken for one).
     let mut next = comment.next_sibling();
     while let Some(n) = next {
-        if !is_comment(&n) {
+        if is_statement(&n) {
             return Some(n);
         }
         next = n.next_sibling();
     }
+    // Buried inside an expression (e.g. `1 + /* @m1:allow */ 2`): fall back to
+    // the nearest enclosing statement. This applies only when the comment is NOT
+    // a direct child of a statement container (`block` / `source_file`): a
+    // trailing comment with no following statement in such a container is
+    // genuinely dangling and must stay `None` (m1-core#61), not silently scope
+    // the whole enclosing block.
+    if !comment.parent().is_some_and(|p| is_statement_container(&p)) {
+        let mut ancestor = comment.parent();
+        while let Some(a) = ancestor {
+            if is_statement(&a) {
+                return Some(a);
+            }
+            ancestor = a.parent();
+        }
+    }
     None
 }
 
-fn is_comment(node: &Node) -> bool {
-    matches!(node.kind(), Kind::LineComment | Kind::BlockComment)
+/// Whether `node` is a named statement-level construct an annotation can attach
+/// to — the unit `is_allowed` tests its byte range against. Anonymous tokens
+/// and sub-statement expression fragments (`number`, `identifier`, `+`) are
+/// excluded; a `block` is included so an annotation can scope a whole body.
+fn is_statement(node: &Node) -> bool {
+    node.is_named()
+        && matches!(
+            node.kind(),
+            Kind::AssignmentStatement
+                | Kind::LocalDeclaration
+                | Kind::ExpressionStatement
+                | Kind::EmptyStatement
+                | Kind::IfStatement
+                | Kind::WhenStatement
+                | Kind::ExpandStatement
+                | Kind::Block
+        )
+}
+
+/// Whether `node` holds statements directly (a `block` body or the file root).
+/// A comment whose parent is one of these is in statement position: if no
+/// following statement exists it is a genuinely dangling annotation (`None`),
+/// not an expression fragment needing the enclosing-statement fallback.
+fn is_statement_container(node: &Node) -> bool {
+    matches!(node.kind(), Kind::Block | Kind::SourceFile)
 }
 
 /// Parse a comment's source text into `(kind, args)` if it is an `@m1:`
@@ -310,6 +363,10 @@ mod tests {
 
     fn parse_anns(src: &str) -> Annotations {
         annotations(&parse(src), &Registry::seed())
+    }
+
+    fn is_comment(node: &Node) -> bool {
+        matches!(node.kind(), Kind::LineComment | Kind::BlockComment)
     }
 
     /// The first statement-ish node (skips comment siblings, which are named).
@@ -505,5 +562,80 @@ mod tests {
         assert_eq!(anns.all().len(), 1);
         assert_eq!(anns.all()[0].kind, "allow");
         assert!(anns.all()[0].has_positional("L010"));
+    }
+
+    /// m1-core#61: an annotation must never attach to an anonymous punctuation
+    /// token (`{`, `}`, `)`, `+`). Doing so was a silent no-op — `is_allowed`
+    /// tests the target byte range against the diagnostic offset, and a 1-byte
+    /// `{` never contains the statement it precedes. Each repro must now either
+    /// suppress correctly (target a named statement that contains the offset) or
+    /// cleanly no-op (`None`).
+    #[test]
+    fn annotation_after_open_brace_targets_following_statement() {
+        // `{ // @m1:allow(...)` — prev sibling is the anonymous `{`; the comment
+        // must skip it and attach to the following `Value = 1;`.
+        let src = "if x\n{ // @m1:allow(L010)\n\tValue = 1;\n}\n";
+        let anns = parse_anns(src);
+        let a = anns.all().iter().find(|a| a.kind == "allow").unwrap();
+        let target = a.target_byte_range.clone().unwrap();
+        assert_eq!(&src[target.clone()], "Value = 1;");
+        // The diagnostic offset inside the statement is suppressed.
+        assert!(anns.is_allowed("L010", target.start + 1));
+    }
+
+    #[test]
+    fn annotation_before_close_brace_is_dangling() {
+        // A comment as the last item in a block has no following statement and
+        // its prev sibling is on a different line: it must dangle (`None`), not
+        // attach to the anonymous `}`.
+        let src = "if x\n{\n\tValue = 1;\n\t// @m1:allow(L010)\n}\n";
+        let anns = parse_anns(src);
+        let a = anns.all().iter().find(|a| a.kind == "allow").unwrap();
+        assert!(
+            a.target_byte_range.is_none(),
+            "expected dangling, got {:?}",
+            a.target_byte_range
+        );
+    }
+
+    #[test]
+    fn annotation_after_condition_paren_scopes_the_body() {
+        // `if (x) // @m1:allow(...)` — prev sibling is the anonymous `)`; the
+        // comment must skip it and attach to the following named `block`, whose
+        // range contains the statement inside.
+        let src = "if (x) // @m1:allow(L010)\n{\n\tValue = 1;\n}\n";
+        let anns = parse_anns(src);
+        let a = anns.all().iter().find(|a| a.kind == "allow").unwrap();
+        let target = a.target_byte_range.clone().unwrap();
+        // Target is the block; the inner statement offset is suppressed.
+        let stmt_off = src.find("Value = 1;").unwrap();
+        assert!(target.contains(&stmt_off));
+        assert!(anns.is_allowed("L010", stmt_off));
+        // It must not be the bare anonymous `)`.
+        assert_ne!(&src[target], ")");
+    }
+
+    #[test]
+    fn annotation_inside_expression_climbs_to_enclosing_statement() {
+        // `1 + /* @m1:allow */ 2` — the comment sits between the anonymous `+`
+        // and `2` inside a binary expression. It must climb to the enclosing
+        // `assignment_statement`, not target `+`, `2`, or `1`.
+        let src = "Value = 1 + /* @m1:allow(L010) */ 2;\n";
+        let anns = parse_anns(src);
+        let a = anns.all().iter().find(|a| a.kind == "allow").unwrap();
+        let target = a.target_byte_range.clone().unwrap();
+        assert_eq!(&src[target.clone()], "Value = 1 + /* @m1:allow(L010) */ 2;");
+        assert!(anns.is_allowed("L010", target.start + 1));
+    }
+
+    #[test]
+    fn working_trailing_allow_still_targets_statement() {
+        // The control case from the issue must keep working unchanged.
+        let src = "y = 1; // @m1:allow(L010)\n";
+        let anns = parse_anns(src);
+        let a = anns.all().iter().find(|a| a.kind == "allow").unwrap();
+        let target = a.target_byte_range.clone().unwrap();
+        assert_eq!(&src[target.clone()], "y = 1;");
+        assert!(anns.is_allowed("L010", target.start + 1));
     }
 }
