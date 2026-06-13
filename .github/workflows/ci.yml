@@ -77,3 +77,22 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-targets
+
+  # The README install snippet pins a versioned git tag; it silently rotted two
+  # minor versions behind Cargo.toml (m1-core#65). Fail CI when the README's
+  # pinned tag no longer matches the crate version so it can't drift again.
+  readme-tag:
+    name: README tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: README pinned tag matches Cargo.toml version
+        run: |
+          version=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          readme_tag=$(grep -m1 -oE 'tag = "v[0-9]+\.[0-9]+\.[0-9]+"' README.md | sed -E 's/.*"v(.*)".*/\1/')
+          echo "Cargo.toml version: $version"
+          echo "README pinned tag:  v$readme_tag"
+          if [ "$version" != "$readme_tag" ]; then
+            echo "::error file=README.md::README install snippet pins v$readme_tag but Cargo.toml is $version — bump the README tag."
+            exit 1
+          fi
