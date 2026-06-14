@@ -84,26 +84,12 @@ fn char_position(source: &str, byte: usize, point: tree_sitter::Point) -> Positi
         .get(line_start..byte)
         .map(|line| line.chars().count())
         // Defensive: out-of-range or non-boundary slices (incremental-reparse
-        // edges). `point.column` is a *byte* count, which is wrong for a
-        // multi-byte line; derive a character count instead by clamping both
-        // ends to char boundaries and counting codepoints.
-        .unwrap_or_else(|| {
-            let clamped_byte = {
-                let mut b = byte.min(source.len());
-                while b > 0 && !source.is_char_boundary(b) {
-                    b -= 1;
-                }
-                b
-            };
-            let clamped_start = {
-                let mut s = line_start.min(source.len());
-                while s > 0 && !source.is_char_boundary(s) {
-                    s -= 1;
-                }
-                s
-            };
-            source[clamped_start..clamped_byte].chars().count()
-        });
+        // edges). `point.column` is a *byte* count, so `line_start` may not be
+        // the true start of the line; defer to the canonical converter, which
+        // recomputes the line start from scratch and counts codepoints. (We keep
+        // `point.row` for the line below to avoid a newline rescan on this rare
+        // edge.)
+        .unwrap_or_else(|| crate::byte_to_position(source, byte).column as usize);
     Position {
         line: point.row as u32,
         column: column as u32,
@@ -886,6 +872,34 @@ mod tests {
         assert_eq!(
             pos.column, 3,
             "fallback must return char count (3), not byte count (4)"
+        );
+    }
+
+    #[test]
+    fn char_position_fallback_is_robust_to_stale_byte_column() {
+        // The fallback derives `line_start = byte - point.column`, which is only
+        // the true start of the line when that *byte* arithmetic happens to land
+        // there. With a stale/incremental-reparse point whose byte-column does
+        // not point back at the real line start, re-counting codepoints from the
+        // clamped derived offset undercounts the column. The canonical
+        // `byte_to_position` recomputes the line start from scratch (rfind('\n'))
+        // and is correct regardless.
+        //
+        // Source: "\nééz" — '\n'(0) é(1..3) é(3..5) z(5..6). The token of
+        // interest is 'z' at byte 5, on line 1, preceded by "éé" → char column 2.
+        // Give a stale point.column of 1, so line_start = 5 - 1 = 4, which is
+        // inside the second 'é' (not a char boundary) → get(4..5) = None → the
+        // fallback fires. The old fallback clamps 4 down to 3 and counts only the
+        // single 'é' in 3..5 → column 1 (wrong); the canonical helper anchors on
+        // the real line start (byte 1) and counts "éé" → column 2 (correct).
+        let source = "\nééz";
+        let byte = 5usize; // start of 'z'
+        let point = tree_sitter::Point { row: 1, column: 1 }; // stale byte-column
+        let pos = super::char_position(source, byte, point);
+        assert_eq!(pos.line, 1);
+        assert_eq!(
+            pos.column, 2,
+            "fallback must anchor on the true line start, not a stale byte column"
         );
     }
 
