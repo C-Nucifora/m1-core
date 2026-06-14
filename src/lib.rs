@@ -18,4 +18,4 @@ pub use cst::{Children, Cst, Descendants, Edit, MAX_RECURSION_DEPTH, Node, parse
 pub use diagnostic::{Code, Diagnostic, Position, Range, Severity, byte_to_position};
 pub use field::Field;
 pub use kind::Kind;
-pub use kind_pred::{is_binary_op, is_comment, is_compound_assign, is_unary_op};
+pub use kind_pred::{is_assignment_op, is_binary_op, is_comment, is_compound_assign, is_unary_op};

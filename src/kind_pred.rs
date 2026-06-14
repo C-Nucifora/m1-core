@@ -66,6 +66,19 @@ pub fn is_compound_assign(k: Kind) -> bool {
     )
 }
 
+/// Whether `k` is any assignment operator token.
+///
+/// Covers the grammar's full `_assignment_operator` family: plain assignment
+/// (`=`, [`Kind::Assign`]) plus the ten compound forms
+/// (`+= -= *= /= %= &= |= ^= <<= >>=`). The manual likewise lists plain
+/// assignment and the compound-assignment forms as one operator family, so this
+/// is the predicate consumers want when asking "is this *any* assignment
+/// operator?" rather than spelling out `Kind::Assign | is_compound_assign(k)`
+/// by hand. For the compound forms alone, use [`is_compound_assign`].
+pub fn is_assignment_op(k: Kind) -> bool {
+    k == Kind::Assign || is_compound_assign(k)
+}
+
 /// Whether `k` is a unary (prefix) operator token (`! - ~`, plus the keyword
 /// `not`).
 ///
@@ -159,6 +172,41 @@ mod tests {
         assert!(!is_compound_assign(Kind::Assign));
         assert!(!is_compound_assign(Kind::Plus));
         assert!(!is_compound_assign(Kind::EqEq));
+    }
+
+    #[test]
+    fn assignment_ops_are_classified() {
+        for k in [
+            // plain assignment
+            Kind::Assign,
+            // the ten compound forms
+            Kind::PlusEq,
+            Kind::MinusEq,
+            Kind::StarEq,
+            Kind::SlashEq,
+            Kind::PercentEq,
+            Kind::AmpEq,
+            Kind::PipeEq,
+            Kind::CaretEq,
+            Kind::LtLtEq,
+            Kind::GtGtEq,
+        ] {
+            assert!(is_assignment_op(k), "{k:?} should be an assignment op");
+        }
+    }
+
+    #[test]
+    fn non_assignment_ops_are_rejected() {
+        for k in [
+            Kind::Plus,
+            Kind::EqEq,
+            Kind::BangEq,
+            Kind::Lt,
+            Kind::Identifier,
+            Kind::Number,
+        ] {
+            assert!(!is_assignment_op(k), "{k:?} should not be an assignment op");
+        }
     }
 
     #[test]

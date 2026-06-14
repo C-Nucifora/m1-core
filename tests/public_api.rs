@@ -54,3 +54,22 @@ fn is_comment_is_usable_from_outside_the_crate() {
     assert!(!m1_core::is_comment(decl.kind()));
     assert!(!decl.is_comment());
 }
+
+/// The assignment-operator classifier must be reachable from outside the crate
+/// so consumers stop hand-writing `Kind::Assign | is_compound_assign(k)`. It
+/// covers the grammar's full `_assignment_operator` family: plain `=` plus the
+/// ten compound forms.
+#[test]
+fn is_assignment_op_is_usable_from_outside_the_crate() {
+    let cst = m1_core::parse("Engine.Speed += 1;\n");
+    let op = cst
+        .root()
+        .descendants()
+        .find(|n| n.kind() == m1_core::Kind::PlusEq)
+        .expect("the compound-assignment operator");
+    assert!(m1_core::is_assignment_op(op.kind()));
+
+    // Plain `=` is also part of the family; a comparison `==` is not.
+    assert!(m1_core::is_assignment_op(m1_core::Kind::Assign));
+    assert!(!m1_core::is_assignment_op(m1_core::Kind::EqEq));
+}
