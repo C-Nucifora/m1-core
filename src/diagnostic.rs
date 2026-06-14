@@ -11,6 +11,25 @@ pub struct Position {
     pub column: u32,
 }
 
+/// Clamp `byte` to `s.len()`, then round it **down** to the nearest UTF-8 char
+/// boundary (returning `byte` itself when it already lands on one).
+///
+/// Slicing `s` at a byte offset that falls inside a multi-byte character panics
+/// (`"byte index N is not a char boundary"`), and offsets sourced from byte
+/// edits or external positions can land anywhere. Run them through this first
+/// so the following `s[..b]` slice is always valid. This is the one home for
+/// that clamping contract — every position helper shares it instead of carrying
+/// its own copy of the loop. We deliberately do **not** use std's
+/// `str::floor_char_boundary`: it stabilised after this crate's MSRV (1.88), so
+/// calling it would break the MSRV gate.
+pub(crate) fn floor_char_boundary(s: &str, byte: usize) -> usize {
+    let mut b = byte.min(s.len());
+    while b > 0 && !s.is_char_boundary(b) {
+        b -= 1;
+    }
+    b
+}
+
 /// Convert a byte offset into `source` to a 0-based [`Position`].
 ///
 /// Lines are counted by `'\n'`; the column is the number of **characters**
@@ -20,10 +39,7 @@ pub struct Position {
 /// end of `source` is clamped to its end. The canonical helper for turning a
 /// lint/typecheck byte offset into a line/column, replacing per-rule copies.
 pub fn byte_to_position(source: &str, byte_offset: usize) -> Position {
-    let mut offset = byte_offset.min(source.len());
-    while offset > 0 && !source.is_char_boundary(offset) {
-        offset -= 1;
-    }
+    let offset = floor_char_boundary(source, byte_offset);
     let line = source[..offset].bytes().filter(|&b| b == b'\n').count();
     let line_start = source[..offset].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let column = source[line_start..offset].chars().count();
@@ -178,6 +194,24 @@ mod tests {
         // Empty source never panics.
         assert_eq!(byte_to_position("", 0), Position { line: 0, column: 0 });
         assert_eq!(byte_to_position("", 5), Position { line: 0, column: 0 });
+    }
+
+    #[test]
+    fn floor_char_boundary_rounds_down_clamps_and_guards() {
+        // 'é' is two bytes (0..2); a 1-byte 'x' follows at byte 2.
+        let src = "éx";
+        assert_eq!(src.len(), 3);
+        // Already on a boundary -> unchanged.
+        assert_eq!(floor_char_boundary(src, 0), 0);
+        assert_eq!(floor_char_boundary(src, 2), 2);
+        assert_eq!(floor_char_boundary(src, 3), 3);
+        // Mid-codepoint offset 1 rounds down to the enclosing boundary at 0.
+        assert_eq!(floor_char_boundary(src, 1), 0);
+        // Past the end is clamped to the length.
+        assert_eq!(floor_char_boundary(src, 999), 3);
+        // The `> 0` guard: empty input never underflows.
+        assert_eq!(floor_char_boundary("", 0), 0);
+        assert_eq!(floor_char_boundary("", 5), 0);
     }
 
     #[test]
