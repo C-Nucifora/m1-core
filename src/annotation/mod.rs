@@ -230,7 +230,7 @@ impl Annotations {
 pub fn annotations(cst: &Cst, registry: &Registry) -> Annotations {
     let mut out = Annotations::default();
     for node in cst.root().descendants() {
-        if !matches!(node.kind(), Kind::LineComment | Kind::BlockComment) {
+        if !node.is_comment() {
             continue;
         }
         let Some((kind, args)) = parse_comment(node.text()) else {
@@ -365,16 +365,12 @@ mod tests {
         annotations(&parse(src), &Registry::seed())
     }
 
-    fn is_comment(node: &Node) -> bool {
-        matches!(node.kind(), Kind::LineComment | Kind::BlockComment)
-    }
-
     /// The first statement-ish node (skips comment siblings, which are named).
     fn first_stmt(cst: &Cst) -> Node<'_> {
         cst.root()
             .named_children()
             .into_iter()
-            .find(|n| !is_comment(n))
+            .find(|n| !n.is_comment())
             .unwrap()
     }
 

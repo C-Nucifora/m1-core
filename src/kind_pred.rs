@@ -75,6 +75,17 @@ pub fn is_unary_op(k: Kind) -> bool {
     matches!(k, Kind::Bang | Kind::Minus | Kind::Tilde | Kind::Not)
 }
 
+/// Whether `k` is a comment token (`Kind::LineComment` or `Kind::BlockComment`).
+///
+/// Comments are the M1 trivia category every tool must skip when walking
+/// statements and expressions (the formatter, linter and LSP each previously
+/// hand-rolled this `matches!`). Centralising it here keeps the comment set in
+/// lock-step with the generated [`Kind`] enum, the same way [`is_binary_op`]
+/// and friends centralise the operator sets.
+pub fn is_comment(k: Kind) -> bool {
+    matches!(k, Kind::LineComment | Kind::BlockComment)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,6 +172,26 @@ mod tests {
     fn non_unary_ops_are_rejected() {
         for k in [Kind::Plus, Kind::Star, Kind::And, Kind::Identifier] {
             assert!(!is_unary_op(k), "{k:?} should not be a unary op");
+        }
+    }
+
+    #[test]
+    fn comments_are_classified() {
+        for k in [Kind::LineComment, Kind::BlockComment] {
+            assert!(is_comment(k), "{k:?} should be a comment");
+        }
+    }
+
+    #[test]
+    fn non_comments_are_rejected() {
+        for k in [
+            Kind::Identifier,
+            Kind::Number,
+            Kind::Plus,
+            Kind::Other,
+            Kind::LParen,
+        ] {
+            assert!(!is_comment(k), "{k:?} should not be a comment");
         }
     }
 }

@@ -269,6 +269,15 @@ impl<'a> Node<'a> {
         self.inner.is_missing()
     }
 
+    /// True if this node is a comment (line or block).
+    ///
+    /// Comments are the M1 trivia category every tool skips when walking
+    /// statements and expressions; this is the [`crate::is_comment`] predicate
+    /// applied to the node's own [`kind`](Node::kind).
+    pub fn is_comment(&self) -> bool {
+        crate::is_comment(self.kind())
+    }
+
     /// The parent node, if any.
     pub fn parent(&self) -> Option<Node<'a>> {
         self.inner.parent().map(|inner| Node {
@@ -559,6 +568,25 @@ mod tests {
         assert_eq!(target.range().start.column, 0);
         assert_eq!(target.range().end.column, 5);
         assert_eq!(&src[target.byte_range()], "Ratio");
+    }
+
+    #[test]
+    fn node_is_comment_classifies_comment_nodes() {
+        let cst = parse("// hi\nlocal x = 1;\n");
+        let comment = cst
+            .root()
+            .descendants()
+            .find(|n| n.kind() == Kind::LineComment)
+            .expect("a line comment node");
+        assert!(comment.is_comment());
+
+        let decl = cst
+            .root()
+            .children()
+            .into_iter()
+            .find(|n| n.kind() == Kind::LocalDeclaration)
+            .expect("the local declaration");
+        assert!(!decl.is_comment());
     }
 
     #[test]
