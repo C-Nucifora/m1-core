@@ -28,7 +28,11 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --verbose
+      # Workspace-scoped: the root manifest has no default-members, so plain
+      # `cargo test` only runs m1-core and skips xtask's grammar_pins_match /
+      # *_is_fresh guards — the pin-skew that disarms them would slip through
+      # (m1-core#48). --workspace runs every member.
+      - run: cargo test --workspace --verbose
 
   clippy:
     name: Clippy

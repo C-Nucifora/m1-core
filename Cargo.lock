@@ -60,7 +60,7 @@ name = "m1-core"
 version = "0.12.0"
 dependencies = [
  "tree-sitter",
- "tree-sitter-m1 0.7.0",
+ "tree-sitter-m1",
 ]
 
 [[package]]
@@ -204,15 +204,6 @@ checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 
 [[package]]
 name = "tree-sitter-m1"
-version = "0.6.0"
-source = "git+https://github.com/C-Nucifora/tree-sitter-m1.git?tag=v0.6.0#c83a032bb6b53994cc8f2f9e72c03c028b449135"
-dependencies = [
- "cc",
- "tree-sitter-language",
-]
-
-[[package]]
-name = "tree-sitter-m1"
 version = "0.7.0"
 source = "git+https://github.com/C-Nucifora/tree-sitter-m1.git?tag=v0.7.0#86aff156dcaeb81039f09df266b48cc8d41058ae"
 dependencies = [
@@ -231,7 +222,7 @@ name = "xtask"
 version = "0.0.0"
 dependencies = [
  "serde_json",
- "tree-sitter-m1 0.6.0",
+ "tree-sitter-m1",
 ]
 
 [[package]]
