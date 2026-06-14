@@ -29,3 +29,28 @@ fn reparse_is_callable_with_the_exported_edit_type() {
         "incremental reparse must agree with a full parse"
     );
 }
+
+/// The comment/trivia classifier must be reachable both as the free
+/// `is_comment(Kind)` predicate (alongside the operator predicates) and as the
+/// `Node::is_comment` convenience method, so downstream tools stop hand-rolling
+/// `matches!(k, Kind::LineComment | Kind::BlockComment)`.
+#[test]
+fn is_comment_is_usable_from_outside_the_crate() {
+    let cst = m1_core::parse("// note\nlocal x = 1;\n");
+    let comment = cst
+        .root()
+        .descendants()
+        .find(|n| n.is_comment())
+        .expect("a comment node");
+    assert!(m1_core::is_comment(comment.kind()));
+    assert!(comment.is_comment());
+
+    let decl = cst
+        .root()
+        .children()
+        .into_iter()
+        .find(|n| n.kind() == m1_core::Kind::LocalDeclaration)
+        .expect("the local declaration");
+    assert!(!m1_core::is_comment(decl.kind()));
+    assert!(!decl.is_comment());
+}
