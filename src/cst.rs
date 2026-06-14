@@ -60,15 +60,12 @@ fn with_parser<T>(f: impl FnOnce(&mut tree_sitter::Parser) -> T) -> T {
 
 /// tree-sitter `Point` (row + byte-column) of `byte` within `src`.
 fn point_at(src: &str, byte: usize) -> tree_sitter::Point {
-    let mut b = byte.min(src.len());
     // Round down to a UTF-8 char boundary: an `Edit` byte offset that lands
     // inside a multibyte character would otherwise panic the `src[..b]` slice
     // below ("byte index N is not a char boundary"). A column off by a couple of
     // bytes within one codepoint is harmless; a panic in the reparse path is not
     // (it would crash the LSP once incremental reparse is wired up) (#36).
-    while b > 0 && !src.is_char_boundary(b) {
-        b -= 1;
-    }
+    let b = crate::diagnostic::floor_char_boundary(src, byte);
     let row = src.as_bytes()[..b].iter().filter(|&&c| c == b'\n').count();
     let column = b - src[..b].rfind('\n').map(|i| i + 1).unwrap_or(0);
     tree_sitter::Point { row, column }
