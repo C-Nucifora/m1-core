@@ -19,27 +19,37 @@ pub(super) fn strip_comment_markers(text: &str) -> &str {
     }
 }
 
-/// Index of the top-level `)` in `s` (the arg list interior, after the `(`),
-/// respecting double-quoted strings and nested parentheses. A `(` inside the
-/// interior (e.g. an argument that is itself a call like `scale(x, 2)`) opens a
-/// nested group whose `)` does not close the arg list. `None` if unmatched.
-pub(super) fn find_close_paren(s: &str) -> Option<usize> {
+/// Walk `s` once, tracking double-quoted-string and nested-parenthesis state,
+/// and invoke `on_break` at every character seen *outside* a string and at the
+/// top level (paren depth 0). `'"'` toggles string state, `'('`/`')'` adjust
+/// depth (saturating, so a stray `)` cannot underflow). The walk stops and
+/// returns the byte index of the first character for which `on_break` returns
+/// `true`; if none does, returns `None`.
+///
+/// This is the single quote-aware, depth-tracking state machine that
+/// [`find_close_paren`], [`split_top_level`], and [`split_named`] all share —
+/// they differ only in which top-level character they treat as a delimiter.
+fn scan_top_level(s: &str, mut on_break: impl FnMut(usize, char) -> bool) -> Option<usize> {
     let mut in_str = false;
     let mut depth: usize = 0;
     for (i, c) in s.char_indices() {
         match c {
             '"' => in_str = !in_str,
             '(' if !in_str => depth += 1,
-            ')' if !in_str => {
-                if depth == 0 {
-                    return Some(i);
-                }
-                depth -= 1;
-            }
+            ')' if !in_str && depth > 0 => depth = depth.saturating_sub(1),
+            _ if !in_str && depth == 0 && on_break(i, c) => return Some(i),
             _ => {}
         }
     }
     None
+}
+
+/// Index of the top-level `)` in `s` (the arg list interior, after the `(`),
+/// respecting double-quoted strings and nested parentheses. A `(` inside the
+/// interior (e.g. an argument that is itself a call like `scale(x, 2)`) opens a
+/// nested group whose `)` does not close the arg list. `None` if unmatched.
+pub(super) fn find_close_paren(s: &str) -> Option<usize> {
+    scan_top_level(s, |_, c| c == ')')
 }
 
 /// Parse the interior of an arg list (between the parens) into arguments.
@@ -66,21 +76,16 @@ pub(super) fn parse_args(s: &str) -> Vec<AnnotationArg> {
 /// parentheses (a comma inside a `( … )` group belongs to that argument).
 fn split_top_level(s: &str) -> Vec<&str> {
     let mut out = Vec::new();
-    let mut in_str = false;
-    let mut depth: usize = 0;
     let mut start = 0;
-    for (i, c) in s.char_indices() {
-        match c {
-            '"' => in_str = !in_str,
-            '(' if !in_str => depth += 1,
-            ')' if !in_str => depth = depth.saturating_sub(1),
-            ',' if !in_str && depth == 0 => {
-                out.push(&s[start..i]);
-                start = i + 1;
-            }
-            _ => {}
+    // Collect every top-level comma; the callback never breaks (always `false`)
+    // so the scan runs to the end of `s`.
+    scan_top_level(s, |i, c| {
+        if c == ',' {
+            out.push(&s[start..i]);
+            start = i + 1;
         }
-    }
+        false
+    });
     out.push(&s[start..]);
     out
 }
@@ -88,18 +93,7 @@ fn split_top_level(s: &str) -> Vec<&str> {
 /// Split `key=value` on the first top-level `=` (not inside quotes or a nested
 /// `( … )` group), if present.
 fn split_named(tok: &str) -> Option<(&str, &str)> {
-    let mut in_str = false;
-    let mut depth: usize = 0;
-    for (i, c) in tok.char_indices() {
-        match c {
-            '"' => in_str = !in_str,
-            '(' if !in_str => depth += 1,
-            ')' if !in_str => depth = depth.saturating_sub(1),
-            '=' if !in_str && depth == 0 => return Some((&tok[..i], &tok[i + 1..])),
-            _ => {}
-        }
-    }
-    None
+    scan_top_level(tok, |_, c| c == '=').map(|i| (&tok[..i], &tok[i + 1..]))
 }
 
 /// Strip a single pair of surrounding double quotes, if present.
@@ -172,6 +166,43 @@ mod tests {
                 AnnotationArg::Positional("bar".into()),
             ]
         );
+    }
+
+    #[test]
+    fn scan_top_level_is_quote_and_depth_aware() {
+        // The shared scanner skips delimiters inside strings and nested parens,
+        // breaking only at a top-level match. All three public scanners are
+        // thin wrappers over it, so this exercises the one state machine.
+        let s = "a(b=1, \"c=d\"), e=f";
+        // First top-level '=' is the one after `e`, not the ones inside the
+        // nested call or the quoted string.
+        let eq = scan_top_level(s, |_, c| c == '=').unwrap();
+        assert_eq!(&s[..eq], "a(b=1, \"c=d\"), e");
+        // First top-level ',' is the one after the closing paren of `a(...)`.
+        let comma = scan_top_level(s, |_, c| c == ',').unwrap();
+        assert_eq!(&s[..comma], "a(b=1, \"c=d\")");
+        // No top-level ')' here (the only ')' closes the nested group).
+        assert_eq!(scan_top_level(s, |_, c| c == ')'), None);
+    }
+
+    #[test]
+    fn split_named_finds_first_top_level_equals() {
+        assert_eq!(split_named("min=-100"), Some(("min", "-100")));
+        // `=` inside a nested group is not a top-level key/value separator.
+        assert_eq!(split_named("scale(x=1)"), None);
+        // Quoted `=` is ignored; the real separator is the bare one.
+        assert_eq!(split_named("k=\"a=b\""), Some(("k", "\"a=b\"")));
+    }
+
+    #[test]
+    fn stray_top_level_close_paren_does_not_panic() {
+        // A `)` with no matching `(` stays at depth 0 (saturating) and, for the
+        // comma/equals scanners, is simply not a delimiter — it must not
+        // underflow the depth counter.
+        assert_eq!(split_top_level(")a,b"), vec![")a", "b"]);
+        assert_eq!(split_named(")k=v"), Some((")k", "v")));
+        // For find_close_paren, that leading `)` IS the top-level close.
+        assert_eq!(find_close_paren(")a,b"), Some(0));
     }
 
     #[test]
