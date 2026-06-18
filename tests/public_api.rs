@@ -73,3 +73,13 @@ fn is_assignment_op_is_usable_from_outside_the_crate() {
     assert!(m1_core::is_assignment_op(m1_core::Kind::Assign));
     assert!(!m1_core::is_assignment_op(m1_core::Kind::EqEq));
 }
+
+/// The `@m1:` namespace marker must be reachable from outside the crate so
+/// downstream tools (m1-fmt, m1-lint, ...) reference the single source of truth
+/// instead of hard-coding the `"@m1:"` literal — which would silently drift if
+/// the marker ever changed. The `annotation` module is private, so the const is
+/// only reachable via the re-export in `lib.rs`.
+#[test]
+fn marker_is_usable_from_outside_the_crate() {
+    assert_eq!(m1_core::MARKER, "@m1:");
+}

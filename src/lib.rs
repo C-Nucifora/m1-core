@@ -13,7 +13,7 @@ mod kind;
 mod kind_pred;
 mod syntax;
 
-pub use annotation::{Annotation, AnnotationArg, Annotations, Registry, annotations};
+pub use annotation::{Annotation, AnnotationArg, Annotations, MARKER, Registry, annotations};
 pub use cst::{Children, Cst, Descendants, Edit, MAX_RECURSION_DEPTH, Node, parse};
 pub use diagnostic::{Code, Diagnostic, Position, Range, Severity, byte_to_position};
 pub use field::Field;
