@@ -10,4 +10,4 @@ serde_json = "1"
 # guards regenerate from THIS dep's node-types.json and diff against files
 # generated from the crate's dep — a skew silently disarms them (#48). Enforced
 # by the grammar_pins_match test.
-tree-sitter-m1 = { git = "https://github.com/C-Nucifora/tree-sitter-m1.git", tag = "v0.7.0" }
+tree-sitter-m1 = { git = "https://github.com/C-Nucifora/tree-sitter-m1.git", tag = "v0.7.1" }
