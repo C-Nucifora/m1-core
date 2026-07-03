@@ -846,47 +846,16 @@ mod tests {
 
     #[test]
     fn char_position_fallback_yields_char_column_not_byte_column() {
-        // Construct a case where `source.get(line_start..byte)` returns `None`,
-        // forcing the defensive fallback in `char_position`. This happens when
-        // `line_start` lands inside a multibyte codepoint (not a char boundary).
+        // Force the defensive fallback in `char_position`: it fires when
+        // `line_start = byte - point.column` lands inside a multibyte codepoint,
+        // so `source.get(line_start..byte)` is `None`. The fallback must still
+        // return a *char* column, not the raw byte column.
         //
-        // Source: "éx" — 'é' is 2 bytes (0..2), 'x' is 1 byte (2..3).
-        // We build a Point with row=0, column=2 (byte-column for 'x') but then
-        // shift `byte` to 3 (end of 'x') while keeping point.column at 2, so
-        // line_start = 3 - 2 = 1, which is inside 'é' and not a char boundary.
-        // `.get(1..3)` → None → fallback fires.
-        //
-        // The correct char column for byte 3 (end of "éx") is 2 (two chars).
-        // The buggy fallback would return point.column = 2 which happens to be
-        // numerically equal here — so we need a case where bytes ≠ chars:
-        //
-        // Source: "ééx" — each 'é' is 2 bytes; 'x' is at byte 4, end at byte 5.
-        // Point with column=3 (odd byte offset into "ééx", so line_start=5-3=2,
-        // which is a char boundary between the two 'é' chars). That won't
-        // trigger the fallback.
-        //
-        // Better: "éx" at byte=3, point.column=2; line_start=1 (inside 'é').
-        // Char column for byte 3 (end of "éx") = 2 chars. Fallback returns 2
-        // (same number) — not a detectable mismatch here.
-        //
-        // Use "ééy" (4 bytes for "éé", 1 byte 'y' at byte 4, end byte 5).
-        // Force point.column=3 so line_start=5-3=2 (char boundary between the
-        // two 'é'). That's valid, not a fallback trigger.
-        //
-        // The key is: need line_start to be INSIDE a multibyte char AND the
-        // correct char count to differ from point.column (bytes).
-        //
-        // "é_y" where '_' is also a 2-byte char (e.g. another 'é'):
-        // source = "éé" followed by ASCII token. Take byte=5 (end of "éé" + 1 byte
-        // 'y'), point.column=4 (bytes from start-of-line to byte 4 = end of "éé"),
-        // line_start = 5-4 = 1 (inside first 'é') → fallback fires.
-        // Correct char column = 2 chars for "éé" prefix + 1 'y' char? No — byte=5
-        // is end of 'y'. Chars from line start (0) to byte 5: "ééy" = 3 chars.
-        // Byte column (point.column) we provided = 4. So 4 ≠ 3: detectable!
-        //
-        // Let's use: source = "ééy", byte = 5, point = {row:0, column:4}.
-        // line_start = 5 - 4 = 1 (inside first 'é', not a char boundary) → None.
-        // Fallback returns 4 (bytes). Correct answer: 3 chars. Assert column==3.
+        // Setup: source "ééy" (é = 2 bytes each, y = 1). Pass byte = 5 (end of
+        // string) with point.column = 4 (a byte-column). Then line_start = 1,
+        // inside the first 'é' → `get(1..5)` is None → fallback. The correct char
+        // column at byte 5 is 3 ("ééy" = 3 chars), which differs from the byte
+        // column 4 — so a fallback that returned point.column would be detectable.
         let source = "ééy"; // bytes: é(0..2) é(2..4) y(4..5)
         let byte = 5usize; // one past 'y' (end of string)
         let point = tree_sitter::Point { row: 0, column: 4 }; // byte-column of 'y' end

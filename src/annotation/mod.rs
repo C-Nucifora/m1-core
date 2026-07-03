@@ -191,7 +191,8 @@ impl Annotations {
         &self.items
     }
 
-    /// Diagnostics produced during parsing (currently: unknown-kind warnings).
+    /// Diagnostics produced during parsing: unknown-kind and malformed-argument
+    /// warnings (`Code::Annotation`).
     pub fn diagnostics(&self) -> &[Diagnostic] {
         &self.diagnostics
     }
@@ -233,8 +234,20 @@ pub fn annotations(cst: &Cst, registry: &Registry) -> Annotations {
         if !node.is_comment() {
             continue;
         }
-        let Some((kind, args)) = parse_comment(node.text()) else {
-            continue;
+        let (kind, args) = match parse_comment(node.text()) {
+            None => continue,
+            Some(ParsedComment::Malformed { kind, reason }) => {
+                // Report and attach nothing — a malformed suppression directive
+                // must not silently suppress everything on its target.
+                out.diagnostics.push(Diagnostic::at_node(
+                    node,
+                    Severity::Warning,
+                    Code::Annotation,
+                    format!("malformed `@m1:{kind}` annotation: {reason}"),
+                ));
+                continue;
+            }
+            Some(ParsedComment::WellFormed(kind, args)) => (kind, args),
         };
         if !registry.knows(&kind) {
             out.diagnostics.push(Diagnostic::at_node(
@@ -270,12 +283,19 @@ pub fn annotations(cst: &Cst, registry: &Registry) -> Annotations {
 /// inside an expression (no usable statement sibling) we climb to the enclosing
 /// statement instead. Returns `None` when there is no statement to attach to.
 fn attachment_target<'a>(comment: &Node<'a>) -> Option<Node<'a>> {
-    // Trailing: a named statement on the same line as, and before, the comment.
-    if let Some(prev) = comment.prev_sibling()
-        && is_statement(&prev)
-        && prev.range().end.line == comment.range().start.line
-    {
-        return Some(prev);
+    // Trailing: the nearest preceding statement on the same line. Skip any
+    // intervening comments / anonymous tokens on that line so a second same-line
+    // comment does not hide the statement — `x = 1; /* n */ // @m1:allow(L010)`
+    // annotates `x = 1;`, not the following statement.
+    let mut prev = comment.prev_sibling();
+    while let Some(p) = prev {
+        if p.range().end.line != comment.range().start.line {
+            break; // crossed onto an earlier line — this is not a trailing comment
+        }
+        if is_statement(&p) {
+            return Some(p);
+        }
+        prev = p.prev_sibling();
     }
     // Leading: the next named statement sibling, skipping comments and anonymous
     // tokens (so stacked annotation/comment lines all resolve to the same
@@ -321,6 +341,12 @@ fn is_statement(node: &Node) -> bool {
                 | Kind::WhenStatement
                 | Kind::ExpandStatement
                 | Kind::Block
+                // A `when … is …` / `else` clause is an attach target so an
+                // annotation immediately before a clause scopes just that
+                // clause. Otherwise it fell back to the enclosing `when` and
+                // suppressed every sibling clause too.
+                | Kind::IsClause
+                | Kind::ElseClause
         )
 }
 
@@ -334,7 +360,19 @@ fn is_statement_container(node: &Node) -> bool {
 
 /// Parse a comment's source text into `(kind, args)` if it is an `@m1:`
 /// annotation, else `None`.
-fn parse_comment(text: &str) -> Option<(String, Vec<AnnotationArg>)> {
+///
+/// A recognised kind followed by something that is neither empty nor a
+/// `(...)` argument list — a wrong bracket (`@m1:allow[L010]`) or an unclosed
+/// paren (`@m1:allow(L010`) — is [`ParsedComment::Malformed`], NOT a bare
+/// annotation. Silently degrading `allow[L010]` to a bare `allow` suppressed
+/// *every* diagnostic on the target (the worst failure for a suppression
+/// mechanism in vehicle code); the caller now reports it and attaches nothing.
+enum ParsedComment {
+    WellFormed(String, Vec<AnnotationArg>),
+    Malformed { kind: String, reason: String },
+}
+
+fn parse_comment(text: &str) -> Option<ParsedComment> {
     let body = args::strip_comment_markers(text).trim_start();
     let rest = body.strip_prefix(MARKER)?;
     // Kind: a leading identifier `[A-Za-z][A-Za-z0-9_-]*`.
@@ -346,14 +384,26 @@ fn parse_comment(text: &str) -> Option<(String, Vec<AnnotationArg>)> {
         return None;
     }
     let after = rest[kind_end..].trim_start();
-    let parsed = match after.strip_prefix('(') {
-        Some(inner) => {
-            let close = args::find_close_paren(inner).unwrap_or(inner.len());
-            args::parse_args(&inner[..close])
-        }
-        None => Vec::new(),
+    if after.is_empty() {
+        // Bare annotation, no argument list (e.g. a blanket `@m1:allow`).
+        return Some(ParsedComment::WellFormed(kind.to_string(), Vec::new()));
+    }
+    let Some(inner) = after.strip_prefix('(') else {
+        return Some(ParsedComment::Malformed {
+            kind: kind.to_string(),
+            reason: format!("expected `(...)` argument list, found `{after}`"),
+        });
     };
-    Some((kind.to_string(), parsed))
+    let Some(close) = args::find_close_paren(inner) else {
+        return Some(ParsedComment::Malformed {
+            kind: kind.to_string(),
+            reason: "unterminated `(` argument list".to_string(),
+        });
+    };
+    Some(ParsedComment::WellFormed(
+        kind.to_string(),
+        args::parse_args(&inner[..close]),
+    ))
 }
 
 #[cfg(test)]
@@ -441,6 +491,70 @@ mod tests {
         let anns = parse_anns(src);
         let target = anns.all()[0].target_byte_range.clone().unwrap();
         assert_eq!(&src[target], "Ratio = 2;");
+    }
+
+    #[test]
+    fn trailing_annotation_after_same_line_comment_attaches_to_statement() {
+        // A second same-line comment before the annotation must not hide the
+        // preceding statement: the annotation attaches to `Ratio = 2;`, not the
+        // following `Next = 3;` (which was the simultaneous false-pos/false-neg).
+        let src = "Ratio = 2; /* note */ // @m1:allow(L010)\nNext = 3;\n";
+        let anns = parse_anns(src);
+        let target = anns.all()[0].target_byte_range.clone().unwrap();
+        assert_eq!(&src[target], "Ratio = 2;");
+        assert!(anns.is_allowed("L010", src.find("Ratio").unwrap()));
+        assert!(!anns.is_allowed("L010", src.find("Next").unwrap()));
+    }
+
+    #[test]
+    fn malformed_arg_list_is_reported_and_suppresses_nothing() {
+        // `allow[L010]` (wrong bracket) previously degraded to a bare `allow`,
+        // silently suppressing EVERY diagnostic on the target. It must now be
+        // reported and attach nothing.
+        for src in [
+            "// @m1:allow[L010]\nlocal x = 1;\n",
+            "// @m1:allow(L010\nlocal x = 1;\n", // unterminated
+        ] {
+            let anns = parse_anns(src);
+            assert_eq!(anns.diagnostics().len(), 1, "{src:?}");
+            assert_eq!(anns.diagnostics()[0].code, Code::Annotation);
+            assert!(
+                anns.all().is_empty(),
+                "malformed allow must not attach: {src:?}"
+            );
+            assert!(
+                !anns.is_allowed("L010", src.find("local").unwrap()),
+                "{src:?}"
+            );
+            assert!(
+                !anns.is_allowed("T030", src.find("local").unwrap()),
+                "{src:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn annotation_before_is_clause_scopes_only_that_clause() {
+        // An annotation before one `is` clause must scope that clause, not the
+        // whole `when` (which would suppress the sibling clauses too).
+        let src = "\
+when (Source)
+{
+	// @m1:allow(L010)
+	is (A) { Value = 1; }
+	is (B) { Value = 2; }
+}
+";
+        let anns = parse_anns(src);
+        let target = &src[anns.all()[0].target_byte_range.clone().unwrap()];
+        assert!(
+            target.starts_with("is (A)"),
+            "scoped clause, got: {target:?}"
+        );
+        assert!(
+            !target.contains("is (B)"),
+            "must not cover sibling clause: {target:?}"
+        );
     }
 
     #[test]
