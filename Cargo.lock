@@ -204,8 +204,8 @@ checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 
 [[package]]
 name = "tree-sitter-m1"
-version = "0.8.0"
-source = "git+https://github.com/C-Nucifora/tree-sitter-m1.git?tag=v0.8.0#e9dbd45be91c0771105637924a2c5c87ae17c1fb"
+version = "0.8.1"
+source = "git+https://github.com/C-Nucifora/tree-sitter-m1.git?tag=v0.8.1#4512305f8efda1c624f4b0867beb35a1fbd666db"
 dependencies = [
  "cc",
  "tree-sitter-language",
