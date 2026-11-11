@@ -309,11 +309,14 @@ fn attachment_target<'a>(comment: &Node<'a>) -> Option<Node<'a>> {
     }
     // Buried inside an expression (e.g. `1 + /* @m1:allow */ 2`): fall back to
     // the nearest enclosing statement. This applies only when the comment is NOT
-    // a direct child of a statement container (`block` / `source_file`): a
-    // trailing comment with no following statement in such a container is
+    // a direct child of a statement or clause container: a trailing comment
+    // with no following statement in such a container is
     // genuinely dangling and must stay `None` (m1-core#61), not silently scope
     // the whole enclosing block.
-    if !comment.parent().is_some_and(|p| is_statement_container(&p)) {
+    if !comment
+        .parent()
+        .is_some_and(|p| is_statement_container(&p, comment.byte_range().start))
+    {
         let mut ancestor = comment.parent();
         while let Some(a) = ancestor {
             if is_statement(&a) {
@@ -350,12 +353,16 @@ fn is_statement(node: &Node) -> bool {
         )
 }
 
-/// Whether `node` holds statements directly (a `block` body or the file root).
+/// Whether `offset` is in a statement or clause container's body.
 /// A comment whose parent is one of these is in statement position: if no
 /// following statement exists it is a genuinely dangling annotation (`None`),
 /// not an expression fragment needing the enclosing-statement fallback.
-fn is_statement_container(node: &Node) -> bool {
+fn is_statement_container(node: &Node, offset: usize) -> bool {
     matches!(node.kind(), Kind::Block | Kind::SourceFile)
+        || (node.kind() == Kind::WhenStatement
+            && node
+                .child_nodes()
+                .any(|child| child.kind() == Kind::LBrace && child.byte_range().end <= offset))
 }
 
 /// Parse a comment's source text into `(kind, args)` if it is an `@m1:`
