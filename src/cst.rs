@@ -246,6 +246,11 @@ impl<'a> Node<'a> {
         }
     }
 
+    /// Row bounds without converting byte columns to character columns.
+    pub(crate) fn line_range(&self) -> std::ops::Range<usize> {
+        self.inner.start_position().row..self.inner.end_position().row
+    }
+
     /// Build a diagnostic spanning exactly this node.
     pub fn diagnostic(
         &self,

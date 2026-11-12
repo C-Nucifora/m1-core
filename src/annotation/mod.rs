@@ -16,7 +16,9 @@
 //! so an ordinary `@`-containing comment never collides. A `kind` is an
 //! identifier (`allow`, `requires-finite`, `safety-critical`); arguments are an
 //! optional parenthesised, comma-separated list of positional values (`L010`,
-//! `"a message"`, `-100`) and/or `key=value` pairs.
+//! `"a message"`, `-100`) and/or `key=value` pairs. Trailing prose after the closing
+//! parenthesis must be separated by whitespace. Empty parentheses remain valid;
+//! comma-only lists are malformed and never act as blanket suppressions.
 //!
 //! ## Attachment
 //!
@@ -48,7 +50,7 @@
 mod args;
 
 use crate::cst::{Cst, Node};
-use crate::diagnostic::{Code, Diagnostic, Range, Severity};
+use crate::diagnostic::{Code, Diagnostic, Position, Range, Severity};
 use crate::kind::Kind;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range as ByteRange;
@@ -230,34 +232,48 @@ impl Annotations {
 /// construct and validating kinds against `registry`.
 pub fn annotations(cst: &Cst, registry: &Registry) -> Annotations {
     let mut out = Annotations::default();
-    for node in cst.root().descendants() {
-        if !node.is_comment() {
+    let mut cursor = 0;
+    let mut position = Position { line: 0, column: 0 };
+    for (node, target) in comments_with_targets(cst.root()) {
+        let Some(parsed) = parse_comment(node.text()) else {
             continue;
-        }
-        let (kind, args) = match parse_comment(node.text()) {
-            None => continue,
-            Some(ParsedComment::Malformed { kind, reason }) => {
+        };
+        // Comments arrive in source order. Scan each source character at most
+        // once instead of recounting growing prefixes of a long line.
+        let bytes = node.byte_range();
+        advance_position(&cst.source()[cursor..bytes.start], &mut position);
+        let start = position;
+        advance_position(node.text(), &mut position);
+        cursor = bytes.end;
+        let range = Range {
+            start,
+            end: position,
+        };
+        let (kind, args) = match parsed {
+            ParsedComment::Malformed { kind, reason } => {
                 // Report and attach nothing — a malformed suppression directive
                 // must not silently suppress everything on its target.
-                out.diagnostics.push(Diagnostic::at_node(
-                    node,
+                out.diagnostics.push(Diagnostic::new(
                     Severity::Warning,
                     Code::Annotation,
+                    range,
+                    bytes,
                     format!("malformed `@m1:{kind}` annotation: {reason}"),
                 ));
                 continue;
             }
-            Some(ParsedComment::WellFormed(kind, args)) => (kind, args),
+            ParsedComment::WellFormed(kind, args) => (kind, args),
         };
         if !registry.knows(&kind) {
-            out.diagnostics.push(Diagnostic::at_node(
-                node,
+            out.diagnostics.push(Diagnostic::new(
                 Severity::Warning,
                 Code::Annotation,
+                range,
+                bytes.clone(),
                 format!("unknown annotation kind `@m1:{kind}`"),
             ));
         }
-        let target = attachment_target(&node).map(|t| t.byte_range());
+        let target = target.map(|t| t.byte_range());
         let idx = out.items.len();
         if let Some(t) = &target {
             out.by_target_start.entry(t.start).or_default().push(idx);
@@ -265,7 +281,7 @@ pub fn annotations(cst: &Cst, registry: &Registry) -> Annotations {
         out.items.push(Annotation {
             kind,
             args,
-            range: node.range(),
+            range,
             comment_byte_range: node.byte_range(),
             target_byte_range: target,
         });
@@ -273,59 +289,65 @@ pub fn annotations(cst: &Cst, registry: &Registry) -> Annotations {
     out
 }
 
-/// Resolve the construct a comment annotation applies to.
-///
-/// The target must be a *named statement* node — never an anonymous punctuation
-/// token (`{`, `}`, `)`, `+`). Attaching to such a token is a silent no-op:
-/// `is_allowed` checks whether the target byte range contains the diagnostic
-/// offset, and a one-byte `{` never contains the statement it precedes
-/// (m1-core#61). So we skip anonymous siblings, and if a comment is buried
-/// inside an expression (no usable statement sibling) we climb to the enclosing
-/// statement instead. Returns `None` when there is no statement to attach to.
-fn attachment_target<'a>(comment: &Node<'a>) -> Option<Node<'a>> {
-    // Trailing: the nearest preceding statement on the same line. Skip any
-    // intervening comments / anonymous tokens on that line so a second same-line
-    // comment does not hide the statement — `x = 1; /* n */ // @m1:allow(L010)`
-    // annotates `x = 1;`, not the following statement.
-    let mut prev = comment.prev_sibling();
-    while let Some(p) = prev {
-        if p.range().end.line != comment.range().start.line {
-            break; // crossed onto an earlier line — this is not a trailing comment
+fn advance_position(text: &str, position: &mut Position) {
+    for ch in text.chars() {
+        if ch == '\n' {
+            position.line += 1;
+            position.column = 0;
+        } else {
+            position.column += 1;
         }
-        if is_statement(&p) {
-            return Some(p);
-        }
-        prev = p.prev_sibling();
     }
-    // Leading: the next named statement sibling, skipping comments and anonymous
-    // tokens (so stacked annotation/comment lines all resolve to the same
-    // following statement, and a trailing `{`/`)` token is not mistaken for one).
-    let mut next = comment.next_sibling();
-    while let Some(n) = next {
-        if is_statement(&n) {
-            return Some(n);
+}
+
+/// Resolve sibling targets in two linear passes per parent. Cursor-backed
+/// children avoid repeated tree-sitter sibling searches across comment stacks.
+fn comments_with_targets(root: Node<'_>) -> Vec<(Node<'_>, Option<Node<'_>>)> {
+    let mut comments = Vec::new();
+    let mut pending = vec![(root, None, None)];
+    while let Some((node, target, enclosing)) = pending.pop() {
+        if node.is_comment() {
+            comments.push((node, target));
+            continue;
         }
-        next = n.next_sibling();
-    }
-    // Buried inside an expression (e.g. `1 + /* @m1:allow */ 2`): fall back to
-    // the nearest enclosing statement. This applies only when the comment is NOT
-    // a direct child of a statement or clause container: a trailing comment
-    // with no following statement in such a container is
-    // genuinely dangling and must stay `None` (m1-core#61), not silently scope
-    // the whole enclosing block.
-    if !comment
-        .parent()
-        .is_some_and(|p| is_statement_container(&p, comment.byte_range().start))
-    {
-        let mut ancestor = comment.parent();
-        while let Some(a) = ancestor {
-            if is_statement(&a) {
-                return Some(a);
+        let enclosing = if is_statement(&node) {
+            Some(node)
+        } else {
+            enclosing
+        };
+        let children = node.children();
+        let container_start = match node.kind() {
+            Kind::Block | Kind::SourceFile => Some(0),
+            Kind::WhenStatement => children
+                .iter()
+                .find(|child| child.kind() == Kind::LBrace)
+                .map(|child| child.byte_range().end),
+            _ => None,
+        };
+        let mut previous: Option<Node<'_>> = None;
+        let mut siblings = Vec::with_capacity(children.len());
+        for child in children {
+            let trailing = previous.filter(|p| p.line_range().end == child.line_range().start);
+            siblings.push((child, trailing));
+            if is_statement(&child) {
+                previous = Some(child);
             }
-            ancestor = a.parent();
+        }
+        let mut next = None;
+        for (child, trailing) in siblings.into_iter().rev() {
+            let fallback = if container_start.is_some_and(|start| start <= child.byte_range().start)
+            {
+                None
+            } else {
+                enclosing
+            };
+            pending.push((child, trailing.or(next).or(fallback), enclosing));
+            if is_statement(&child) {
+                next = Some(child);
+            }
         }
     }
-    None
+    comments
 }
 
 /// Whether `node` is a named statement-level construct an annotation can attach
@@ -351,18 +373,6 @@ fn is_statement(node: &Node) -> bool {
                 | Kind::IsClause
                 | Kind::ElseClause
         )
-}
-
-/// Whether `offset` is in a statement or clause container's body.
-/// A comment whose parent is one of these is in statement position: if no
-/// following statement exists it is a genuinely dangling annotation (`None`),
-/// not an expression fragment needing the enclosing-statement fallback.
-fn is_statement_container(node: &Node, offset: usize) -> bool {
-    matches!(node.kind(), Kind::Block | Kind::SourceFile)
-        || (node.kind() == Kind::WhenStatement
-            && node
-                .child_nodes()
-                .any(|child| child.kind() == Kind::LBrace && child.byte_range().end <= offset))
 }
 
 /// Parse a comment's source text into `(kind, args)` if it is an `@m1:`
@@ -407,10 +417,18 @@ fn parse_comment(text: &str) -> Option<ParsedComment> {
             reason: "unterminated `(` argument list".to_string(),
         });
     };
-    Some(ParsedComment::WellFormed(
-        kind.to_string(),
-        args::parse_args(&inner[..close]),
-    ))
+    let arguments = &inner[..close];
+    let parsed = args::parse_args(arguments);
+    let suffix = &inner[close + 1..];
+    if (parsed.is_empty() && !arguments.trim().is_empty())
+        || (!suffix.is_empty() && !suffix.starts_with(char::is_whitespace))
+    {
+        return Some(ParsedComment::Malformed {
+            kind: kind.to_string(),
+            reason: "empty argument entries or unexpected argument-list suffix".to_string(),
+        });
+    }
+    Some(ParsedComment::WellFormed(kind.to_string(), parsed))
 }
 
 #[cfg(test)]
